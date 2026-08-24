@@ -203,9 +203,11 @@ No Redis, no Celery, no auth. PDF parsing has no dependency wired up yet —
 `StatementFile` detects PDFs by magic bytes so a PDF adapter can be added
 without changing the contract.
 
-## Known gaps
+## Motivation
 
-- `POST /statements/upload` does not persist. The `Statement` / `Transaction`
-  tables and the migration exist; wiring the insert is the next commit.
-- No deduplication of re-uploaded statements. `Statement.content_sha256` is
-  stored and indexed for exactly this, but nothing checks it yet.
+## Contributing
+
+## Usage
+
+## Quick Start
+
