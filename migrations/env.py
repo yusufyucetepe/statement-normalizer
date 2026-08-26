@@ -10,7 +10,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# Default to the app's own DSN so the two can never disagree, but let a caller
+# that already set a URL win — that is how the test suite points Alembic at the
+# test database.
+if not config.get_main_option("sqlalchemy.url", None):
+    config.set_main_option("sqlalchemy.url", get_settings().database_url)
+
 target_metadata = Base.metadata
 
 

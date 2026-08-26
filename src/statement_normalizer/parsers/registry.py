@@ -2,15 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from statement_normalizer.models.schemas import Transaction
+from statement_normalizer.models.schemas import StatementFormat, Transaction
 from statement_normalizer.parsers.base import StatementFile, StatementParser
-from statement_normalizer.parsers.exceptions import AmbiguousParserMatch, NoMatchingParser
+from statement_normalizer.parsers.exceptions import (
+    AmbiguousParserMatch,
+    NoMatchingParser,
+    StatementParseError,
+)
 
 
 @dataclass(frozen=True)
 class ParseResult:
     institution: str
+    format: StatementFormat
     transactions: list[Transaction]
+    account_ref: str | None = None
 
 
 class ParserRegistry:
@@ -68,7 +74,31 @@ class ParserRegistry:
 
     def parse(self, file: StatementFile) -> ParseResult:
         parser = self.detect(file)
-        return ParseResult(institution=parser.institution, transactions=parser.parse(file))
+        return ParseResult(
+            institution=parser.institution,
+            format=_resolve_format(file, parser),
+            transactions=parser.parse(file),
+            account_ref=parser.extract_account_ref(file),
+        )
+
+
+def _resolve_format(file: StatementFile, parser: StatementParser) -> StatementFormat:
+    """Decide what format a claimed file actually is.
+
+    `StatementFile.format` is None when the extension is unrecognized and the
+    magic bytes say nothing. A parser that handles exactly one format settles it;
+    one that handles several genuinely cannot be resolved, and guessing would
+    mislabel the stored statement.
+    """
+    if file.format is not None:
+        return file.format
+    if len(parser.supported_formats) == 1:
+        return next(iter(parser.supported_formats))
+    raise StatementParseError(
+        parser.institution,
+        f"cannot tell the format of {file.filename!r}: no known extension, and "
+        f"this parser handles {sorted(f.value for f in parser.supported_formats)}",
+    )
 
 
 #: Process-wide registry. Concrete parsers register onto it at import time;

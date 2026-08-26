@@ -12,6 +12,22 @@ concurrency:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: statements
+          POSTGRES_PASSWORD: statements
+          POSTGRES_DB: statements_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U statements -d statements_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -30,4 +46,6 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Pytest
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://statements:statements@localhost:5432/statements_test
         run: uv run pytest

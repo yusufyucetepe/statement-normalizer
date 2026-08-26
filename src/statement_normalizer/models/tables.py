@@ -52,7 +52,12 @@ class Statement(Base):
     filename: Mapped[str] = mapped_column(String(512))
     source_institution: Mapped[str] = mapped_column(String(64), index=True)
     format: Mapped[StatementFormat] = mapped_column(_format_enum)
-    content_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    # Unique: re-uploading the same bytes is rejected rather than double-counted.
+    content_sha256: Mapped[str] = mapped_column(String(64), index=True, unique=True)
+    # The account/IBAN/broker id, when the export exposes one. Deliberately a
+    # nullable column rather than an Account entity: we model that once a real
+    # export shows us its shape.
+    account_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     transaction_count: Mapped[int] = mapped_column(default=0)
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

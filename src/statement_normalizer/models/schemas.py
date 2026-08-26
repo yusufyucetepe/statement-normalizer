@@ -75,6 +75,13 @@ class TransactionRead(Transaction):
 
 
 class StatementRead(BaseModel):
+    """A stored statement. The body of POST /statements/upload.
+
+    The transactions themselves are not inlined: a statement can carry thousands
+    of rows, so the upload response points at `GET /transactions?statement_id=`
+    via its Location header rather than growing without bound.
+    """
+
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -82,15 +89,6 @@ class StatementRead(BaseModel):
     source_institution: str
     format: StatementFormat
     content_sha256: str
+    account_ref: str | None = None
     transaction_count: int
     uploaded_at: datetime
-
-
-class UploadResponse(BaseModel):
-    """Result of POST /statements/upload."""
-
-    statement: StatementRead | None = None
-    detected_institution: str
-    transaction_count: int
-    stored: bool = Field(description="False while persistence is still a stub.")
-    transactions: list[Transaction]

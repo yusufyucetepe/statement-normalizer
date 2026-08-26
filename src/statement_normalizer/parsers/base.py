@@ -103,5 +103,14 @@ class StatementParser(ABC):
     def parse(self, file: StatementFile) -> list[Transaction]:
         """Convert the file into normalized transactions, in statement order."""
 
+    def extract_account_ref(self, file: StatementFile) -> str | None:
+        """The account/IBAN/broker id this statement covers, if the export says.
+
+        Optional: adapters whose format carries no account identifier inherit
+        this and do nothing. Kept off `parse` so the required interface stays
+        `can_parse` / `parse`.
+        """
+        return None
+
     def __repr__(self) -> str:
         return f"<{type(self).__name__} institution={self.institution!r} priority={self.priority}>"

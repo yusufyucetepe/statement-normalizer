@@ -14,6 +14,12 @@ def test_can_parse_accepts_its_own_header_and_rejects_others(statement_file):
     assert parser.can_parse(statement_file("unknown_institution.csv")) is False
 
 
+def test_extract_account_ref_reads_the_account_column(statement_file):
+    assert parser.extract_account_ref(statement_file("dummy_bank_statement.csv")) == (
+        "GB00DUMY12345678"
+    )
+
+
 def test_parse_normalizes_every_row(statement_file):
     transactions = parser.parse(statement_file("dummy_bank_statement.csv"))
 

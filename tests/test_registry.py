@@ -35,6 +35,15 @@ def test_detect_routes_a_known_layout_to_its_parser(statement_file):
     assert parser.institution == "dummy_bank"
 
 
+def test_parse_result_carries_the_statement_metadata(statement_file):
+    result = registry.parse(statement_file("dummy_bank_statement.csv"))
+
+    assert result.institution == "dummy_bank"
+    assert result.format is StatementFormat.CSV
+    assert result.account_ref == "GB00DUMY12345678"
+    assert len(result.transactions) == 4
+
+
 def test_unrecognized_layout_raises_no_matching_parser(statement_file):
     with pytest.raises(NoMatchingParser) as exc:
         registry.detect(statement_file("unknown_institution.csv"))

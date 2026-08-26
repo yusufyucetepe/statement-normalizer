@@ -4,7 +4,6 @@ from statement_normalizer.models.schemas import (
     StatementRead,
     Transaction,
     TransactionRead,
-    UploadResponse,
 )
 from statement_normalizer.models.tables import Base
 from statement_normalizer.models.tables import Statement as StatementRow
@@ -19,5 +18,4 @@ __all__ = [
     "Transaction",
     "TransactionRead",
     "TransactionRow",
-    "UploadResponse",
 ]

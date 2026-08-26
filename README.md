@@ -4,10 +4,11 @@ A FastAPI service that accepts an uploaded bank or broker statement (CSV or PDF)
 detects which institution produced it, parses it into one normalized transaction
 schema, validates it, and stores it in Postgres.
 
-**Status: skeleton.** This commit ships the structure and the *parsing contract*.
-There are no parsers for real institutions — only a `dummy_bank` reference
-adapter that exercises the contract end to end. Persistence on upload is a
-documented stub.
+**Status: working skeleton.** Upload → detect → parse → validate → store is
+wired end to end and covered by tests against a real Postgres. What is missing
+is *parsers for real institutions* — the only adapter is `dummy_bank`, which
+exists to demonstrate the contract. Adding an institution means adding one file;
+see [The adapter pattern](#the-adapter-pattern).
 
 ---
 
@@ -48,13 +49,24 @@ The `api` service waits for Postgres to pass its healthcheck, then runs
 ### Tests and lint
 
 ```bash
-uv run pytest
+uv run pytest                 # parser + registry tests; DB tests skip
 uv run ruff check .
 uv run ruff format --check .
 ```
 
-The test suite needs no database — it covers the registry and the dummy parser,
-which are pure functions over bytes.
+Parser and registry tests are pure functions over bytes and need no database.
+The persistence tests skip unless `TEST_DATABASE_URL` is set:
+
+```bash
+docker compose up -d db
+docker compose exec db createdb -U statements statements_test
+TEST_DATABASE_URL=postgresql+psycopg://statements:statements@localhost:5432/statements_test \
+  uv run pytest
+```
+
+Those tests run `alembic upgrade head` against that database, then wrap each
+test in a transaction that is rolled back — so they exercise the real
+migrations, real JSONB, and real `NUMERIC`, and still leave no residue.
 
 ---
 
@@ -62,17 +74,40 @@ which are pure functions over bytes.
 
 | Method | Path                 | Notes |
 |--------|----------------------|-------|
-| `POST` | `/statements/upload` | Multipart upload. Detects + parses + validates. **Stub:** returns the normalized transactions with `stored=false`; nothing is written yet. |
-| `GET`  | `/transactions`      | Filters: `date_from`, `date_to`, `direction` (`credit`/`debit`), `institution`, `limit`, `offset`. **Stub:** the query is real but the tables are empty until upload persistence lands. |
+| `POST` | `/statements/upload` | Multipart upload. Detects, parses, validates and stores. **201** with the statement summary and a `Location` header; **409** if these exact bytes were uploaded before; **422** if no parser recognizes the file or a claimed file is malformed. |
+| `GET`  | `/transactions`      | Filters: `date_from`, `date_to`, `direction` (`credit`/`debit`), `institution`, `statement_id`, `limit`, `offset`. |
 | `GET`  | `/parsers`           | The live adapters, in the order detection considers them. |
 | `GET`  | `/health`            | Liveness. |
 
 Try it:
 
 ```bash
-curl -F "file=@tests/fixtures/dummy_bank_statement.csv" \
+curl -i -F "file=@tests/fixtures/dummy_bank_statement.csv" \
      http://localhost:8000/statements/upload
+# HTTP/1.1 201 Created
+# location: /transactions?statement_id=e86a38b2-...
+
+curl "http://localhost:8000/transactions?statement_id=e86a38b2-..."
 ```
+
+The upload response deliberately does **not** inline the transactions — a
+statement can carry thousands of rows. It returns the summary and points at the
+paginated `/transactions` endpoint instead.
+
+### Re-uploading the same file
+
+Uploads are deduplicated on the SHA-256 of the file contents, which carries a
+unique index. A byte-identical re-upload returns `409` with the id of the
+statement that already holds it:
+
+```json
+{ "detail": { "message": "this file has already been uploaded",
+              "statement_id": "e86a38b2-...", "uploaded_at": "..." } }
+```
+
+The `SELECT` before the insert is only a fast path. The unique index is the
+source of truth: two concurrent identical uploads both pass that check, and the
+loser is caught as an `IntegrityError` and converted to the same `409`.
 
 ---
 
@@ -169,9 +204,12 @@ Tests build a throwaway `ParserRegistry()` rather than mutating global state.
 
 1. Create `src/statement_normalizer/parsers/<institution>.py`.
 2. Subclass `StatementParser`, set `institution`, implement `can_parse` / `parse`.
-3. Decorate the class with `@registry.register`.
-4. Import it in `parsers/__init__.py`.
-5. Drop a real (anonymized) export into `tests/fixtures/` and assert against it.
+3. Optionally override `extract_account_ref(file)` if the export names the
+   account it covers — it defaults to `None`, so adapters whose format carries
+   no account identifier can ignore it.
+4. Decorate the class with `@registry.register`.
+5. Import it in `parsers/__init__.py`.
+6. Drop a real (anonymized) export into `tests/fixtures/` and assert against it.
 
 `dummy_csv.py` is the reference implementation — copy its shape.
 
@@ -196,7 +234,6 @@ src/statement_normalizer/
 migrations/              Alembic
 tests/fixtures/          sample statement exports
 ```
-
 ## Not included, deliberately
 
 No Redis, no Celery, no auth. PDF parsing has no dependency wired up yet —
@@ -211,3 +248,19 @@ without changing the contract.
 
 ## Quick Start
 
+## Known gaps
+
+- **No real institution adapters yet.** `dummy_bank` is the only one; it exists
+  to prove the contract, not to read anyone's statements.
+- **No PDF adapter.** `StatementFile` detects PDFs by magic bytes so one can be
+  added without touching the contract, but no PDF dependency is wired up.
+- **Dedupe is global, not per institution.** The unique index is on
+  `content_sha256` alone, so two institutions emitting a byte-identical file
+  would collide. Vanishingly unlikely with real exports.
+- **Overlapping statement periods double-count.** Dedupe is per file, not per
+  transaction, so two statements covering an overlapping range will both store
+  their shared rows. Per-transaction identity is the fix when it matters.
+- **No pagination metadata.** `/transactions` takes `limit`/`offset` but returns
+  a bare array with no total count.
+
+If you'd rather honour your original intent, just delete the ## Known gaps block from the above. Keep ## Not included, deliberately either way — it exists in both sides and must appear exactly once.

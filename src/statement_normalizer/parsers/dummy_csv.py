@@ -43,6 +43,7 @@ class DummyBankCsvParser(StatementParser):
 
     #: The exact header this export emits; the fingerprint used for detection.
     HEADER: ClassVar[tuple[str, ...]] = (
+        "account_number",
         "posting_date",
         "narrative",
         "amount",
@@ -72,6 +73,18 @@ class DummyBankCsvParser(StatementParser):
                 continue
             transactions.append(self._to_transaction(row, row_number))
         return transactions
+
+    def extract_account_ref(self, file: StatementFile) -> str | None:
+        """This export repeats the account number on every row; take the first."""
+        reader = csv.DictReader(io.StringIO(file.text))
+        if reader.fieldnames is None:
+            return None
+        reader.fieldnames = [_normalize_header(name) for name in reader.fieldnames]
+        for row in reader:
+            account_ref = (row.get("account_number") or "").strip()
+            if account_ref:
+                return account_ref
+        return None
 
     def _to_transaction(self, row: dict[str, str], row_number: int) -> Transaction:
         missing = [column for column in self.HEADER if row.get(column) is None]
