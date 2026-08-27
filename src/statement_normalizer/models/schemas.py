@@ -70,7 +70,9 @@ class TransactionRead(Transaction):
     model_config = ConfigDict(frozen=True, from_attributes=True)
 
     id: UUID
-    statement_id: UUID
+    #: Every statement this transaction appeared in. A transaction shared by two
+    #: overlapping statements is stored once and lists both.
+    statement_ids: list[UUID] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -90,5 +92,9 @@ class StatementRead(BaseModel):
     format: StatementFormat
     content_sha256: str
     account_ref: str | None = None
-    transaction_count: int
+    transaction_count: int = Field(description="Rows parsed out of this file.")
+    new_transaction_count: int = Field(
+        description="Rows not already stored by an earlier statement. Lower than "
+        "`transaction_count` when this statement overlaps another.",
+    )
     uploaded_at: datetime

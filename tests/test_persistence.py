@@ -23,7 +23,7 @@ def test_upload_stores_the_statement_and_its_transactions(upload, client, count_
     assert Decimal(credit["amount"]) == Decimal("2500.00")
     assert credit["direction"] == "credit"
     assert credit["raw_row"]["narrative"] == "ACME PAYROLL   JAN"
-    assert credit["statement_id"] == body["id"]
+    assert credit["statement_ids"] == [body["id"]]
 
 
 def test_reuploading_the_same_bytes_is_rejected(upload, count_rows):
@@ -76,5 +76,75 @@ def test_statement_id_filter_scopes_results_to_one_statement(upload, client):
 
     assert len(jan_rows) == 4
     assert len(feb_rows) == 2
-    assert {r["statement_id"] for r in feb_rows} == {february["id"]}
+    assert all(r["statement_ids"] == [february["id"]] for r in feb_rows)
     assert len(client.get("/transactions").json()) == 6
+
+
+def test_an_overlapping_statement_stores_the_union_not_the_sum(upload, client, count_rows):
+    """The bug this milestone exists to fix: two exports sharing a period.
+
+    dummy_bank_overlap.csv repeats the 01-07 and 01-09 rows of the January
+    statement and adds two of its own.
+    """
+    january = upload("dummy_bank_statement.csv").json()
+    overlap = upload("dummy_bank_overlap.csv")
+
+    assert overlap.status_code == 201
+    body = overlap.json()
+    assert body["transaction_count"] == 4  # rows in the file
+    assert body["new_transaction_count"] == 2  # rows not already stored
+
+    assert count_rows("statements") == 2
+    assert count_rows("transactions") == 6  # union of 4 and 4, not 8
+    assert count_rows("statement_transactions") == 8  # every row of both files
+
+    # Each statement still reports its own file in full.
+    assert len(client.get("/transactions", params={"statement_id": january["id"]}).json()) == 4
+    assert len(client.get("/transactions", params={"statement_id": body["id"]}).json()) == 4
+
+    # And the unfiltered list counts each transaction exactly once.
+    rows = client.get("/transactions").json()
+    assert len(rows) == 6
+    shared = next(r for r in rows if r["description"] == "REFUND ELECTRONICS LTD")
+    assert sorted(shared["statement_ids"]) == sorted([january["id"], body["id"]])
+
+
+def test_a_wholly_duplicate_statement_is_accepted_and_adds_nothing(upload, count_rows):
+    """Same content, different bytes: the file is recorded, the transactions are not.
+
+    dummy_bank_restated.csv is the January statement with the blank line removed
+    and the currency column upper-cased — neither of which changes a transaction.
+    """
+    upload("dummy_bank_statement.csv")
+    response = upload("dummy_bank_restated.csv")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["transaction_count"] == 4
+    assert body["new_transaction_count"] == 0
+
+    assert count_rows("statements") == 2
+    assert count_rows("transactions") == 4
+    assert count_rows("statement_transactions") == 8
+
+
+def test_repeated_transactions_in_one_statement_are_all_stored(upload, client, count_rows):
+    """Three identical coffees are three real transactions, not one."""
+    response = upload("dummy_bank_repeats.csv")
+
+    assert response.status_code == 201
+    assert response.json()["new_transaction_count"] == 3
+    assert count_rows("transactions") == 3
+
+    rows = client.get("/transactions").json()
+    same_day = [r for r in rows if r["date"] == "2026-03-02"]
+    assert len(same_day) == 2
+    assert all(Decimal(r["amount"]) == Decimal("3.20") for r in same_day)
+
+
+def test_statement_ordering_follows_the_file_not_the_ledger(upload, client):
+    """Within a statement, rows come back in file order."""
+    overlap = upload("dummy_bank_overlap.csv").json()
+
+    rows = client.get("/transactions", params={"statement_id": overlap["id"]}).json()
+    assert [r["date"] for r in rows] == ["2026-01-07", "2026-01-09", "2026-01-14", "2026-01-20"]

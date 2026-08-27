@@ -51,6 +51,47 @@ routes over async SQLAlchemy; nullable `account_ref` column rather than an
   branch, not the `SELECT` fast path.
 - `ruff check` / `ruff format --check` clean.
 
+## Milestone 3 — per-transaction identity (done)
+
+Fixes the correctness bug behind "overlapping statement periods double-count":
+file-level dedupe only catches the same *file* twice, so two exports sharing a
+period stored the shared rows twice and every total computed off `transactions`
+was silently wrong.
+
+Decisions: many-to-many, so `?statement_id=` reports a statement's whole file
+while the unfiltered list counts each transaction once; a wholly-duplicate
+upload is 201 with `new_transaction_count: 0`, not 409.
+
+- [x] `models/identity.py`: SHA-256 fingerprint + occurrence numbering, so
+      genuinely repeated transactions survive while overlaps merge
+- [x] Migration `0003`: `statement_transactions` join table, `transactions`
+      gains `dedupe_key` (unique) and `account_ref`, `statements` gains
+      `new_transaction_count`
+- [x] Upload inserts with `ON CONFLICT (dedupe_key) DO NOTHING` over
+      pre-generated ids, so a lost race links to the winner's row
+- [x] `/transactions` joins through the link table; `TransactionRead` exposes
+      `statement_ids` (list) instead of `statement_id`
+- [x] Fixtures: `dummy_bank_overlap.csv`, `dummy_bank_repeats.csv`,
+      `dummy_bank_restated.csv`
+- [x] 17 identity tests (no DB) + 4 new persistence tests
+- [x] README: "Overlapping statements", refreshed Known gaps
+
+### Verification performed
+
+- `uv run pytest` with no `TEST_DATABASE_URL` → identity/parser/registry pass,
+  DB tests skip.
+- `TEST_DATABASE_URL=… uv run pytest` → **36 passed** against real Postgres 16.
+- `alembic check` → "No new upgrade operations detected". Caught a real drift
+  first time: the ORM declared a unique *constraint* while `0003` created a
+  unique *index*.
+- `alembic downgrade -1 && alembic upgrade head` on data with a real overlap:
+  8 links → 6 after downgrade, demonstrating the documented lossiness.
+- **Race test:** 8 concurrent byte-distinct uploads sharing two transactions →
+  8×201, 10 transactions (not 24), 24 links, each shared row stored once and
+  linked to all 8 statements, `new_transaction_count` summing to exactly 10.
+  This is the `ON CONFLICT` path, not the sha256 fast path.
+- `ruff check` / `ruff format --check` clean.
+
 ## Next
 
 - [ ] First real institution adapter, with an anonymized fixture. This is the
@@ -58,5 +99,3 @@ routes over async SQLAlchemy; nullable `account_ref` column rather than an
 - [ ] PDF adapter (`StatementFile.is_pdf` already detects by magic bytes; no
       PDF dependency is wired up yet).
 - [ ] Pagination metadata on `/transactions` (total count alongside the rows).
-- [ ] Per-transaction identity, so statements covering overlapping periods
-      merge instead of double-counting.

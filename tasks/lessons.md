@@ -40,3 +40,35 @@ Passing a file handle to a chain of `can_parse` calls means the first reader
 drains it and every later parser sees an empty stream — detection silently
 depends on registration order. Read once into a value object
 (`StatementFile`) and hand every adapter the same immutable bytes.
+
+## One hash, one implementation
+
+Migration `0003` needed a `dedupe_key` backfill, and the obvious move was to
+recompute the fingerprint in SQL with `sha256()` and a window function for the
+occurrence counter. That would have been a second implementation of a hash whose
+Python version lives in `models/identity.py` — and the two only have to disagree
+about one detail (Decimal scale, case folding, separator) for the backfilled
+rows to never match anything the app writes afterwards, silently.
+
+**Why:** a hash used as an identity has no tolerance for drift, and drift
+between two implementations is invisible until the data is already wrong.
+
+**How to apply:** never reimplement a fingerprint in a second language to
+backfill. Either run the real implementation over the rows (a data-migration
+script that imports the app code), or leave the column NULL and make NULL mean
+something safe. `0003` left it NULL, because NULL already meant "do not
+deduplicate".
+
+## `alembic check` catches constraint-vs-index drift
+
+`mapped_column(..., unique=True)` declares a unique **constraint**;
+`mapped_column(..., index=True, unique=True)` declares a unique **index**. They
+behave identically for `ON CONFLICT`, so nothing failed at runtime — `alembic
+check` was the only thing that noticed `0003` and the ORM disagreed.
+
+**Why:** functional equivalence hides schema drift, and drift compounds across
+migrations until an autogenerate produces nonsense.
+
+**How to apply:** run `alembic check` after every hand-written migration, not
+just after autogenerate. Treat a diff as a real finding even when the two forms
+are functionally the same.

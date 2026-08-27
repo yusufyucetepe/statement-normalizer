@@ -1,13 +1,17 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from statement_normalizer.api.deps import RegistryDep, SessionDep
 from statement_normalizer.config import get_settings
+from statement_normalizer.models.identity import assign_dedupe_keys
 from statement_normalizer.models.schemas import StatementRead
 from statement_normalizer.models.tables import Statement as StatementRow
+from statement_normalizer.models.tables import StatementTransaction as LinkRow
 from statement_normalizer.models.tables import Transaction as TransactionRow
 from statement_normalizer.parsers import (
     AmbiguousParserMatch,
@@ -82,11 +86,21 @@ def upload_statement(
 
 
 def _persist(session, statement_file: StatementFile, result: ParseResult) -> StatementRow:
-    """Insert the statement and its transactions atomically.
+    """Store the statement, the transactions it introduces, and the links between.
+
+    Transactions are deduplicated on `dedupe_key`, so a statement whose period
+    overlaps an earlier one contributes only its new rows — but it still links to
+    every row in its own file, so `?statement_id=` reports the whole statement.
 
     Parsing has already succeeded by this point, so a 4xx can never leave a
     half-written statement behind.
     """
+    keys = assign_dedupe_keys(result.transactions, result.account_ref)
+    # Generate the ids up front. `ON CONFLICT DO NOTHING` does not report which
+    # rows it skipped, so knowing our own ids is what lets us tell "we inserted
+    # this" from "someone else already had it" with a single follow-up SELECT.
+    ids = [uuid.uuid4() for _ in result.transactions]
+
     statement = StatementRow(
         filename=statement_file.filename,
         source_institution=result.institution,
@@ -96,28 +110,32 @@ def _persist(session, statement_file: StatementFile, result: ParseResult) -> Sta
         transaction_count=len(result.transactions),
     )
     session.add(statement)
-    session.add_all(
-        TransactionRow(
-            statement=statement,
-            row_index=row_index,
-            date=txn.date,
-            description=txn.description,
-            amount=txn.amount,
-            currency=txn.currency,
-            direction=txn.direction,
-            balance_after=txn.balance_after,
-            raw_row=txn.raw_row,
-            source_institution=txn.source_institution,
-        )
-        for row_index, txn in enumerate(result.transactions)
-    )
 
     try:
+        session.flush()
+        resolved = _insert_transactions(session, result, keys, ids)
+        if resolved:
+            session.execute(
+                insert(LinkRow),
+                [
+                    {
+                        "statement_id": statement.id,
+                        "transaction_id": transaction_id,
+                        "row_index": row_index,
+                    }
+                    for row_index, transaction_id in enumerate(resolved)
+                ],
+            )
+        statement.new_transaction_count = sum(
+            1 for ours, actual in zip(ids, resolved, strict=True) if ours == actual
+        )
         session.commit()
     except IntegrityError as exc:
-        # The pre-check above loses the race between two concurrent identical
-        # uploads: both see nothing and both insert. The unique index on
-        # content_sha256 is the actual source of truth, so the loser lands here.
+        # The pre-check in the route loses the race between two concurrent
+        # identical uploads: both see nothing and both insert. The unique index
+        # on content_sha256 is the actual source of truth, so the loser lands
+        # here. (Transaction-level races do not reach this branch — they are
+        # absorbed by ON CONFLICT DO NOTHING below.)
         session.rollback()
         winner = session.scalars(
             select(StatementRow).where(StatementRow.content_sha256 == statement_file.sha256)
@@ -128,6 +146,62 @@ def _persist(session, statement_file: StatementFile, result: ParseResult) -> Sta
 
     session.refresh(statement)
     return statement
+
+
+def _insert_transactions(
+    session, result: ParseResult, keys: list[str | None], ids: list[uuid.UUID]
+) -> list[uuid.UUID]:
+    """Insert the transactions this statement introduces; return one id per parsed row.
+
+    Rows already stored under the same `dedupe_key` resolve to the existing id
+    rather than a new one. `ON CONFLICT DO NOTHING` rather than
+    SELECT-then-INSERT because a concurrent upload of an overlapping statement
+    would otherwise have both writers insert the same transaction; the follow-up
+    SELECT then resolves every key to whichever row actually won.
+
+    A NULL `dedupe_key` never conflicts, so statements with no account reference
+    always insert fresh rows — see `models/identity.py` for why.
+    """
+    if not result.transactions:
+        return []
+
+    session.execute(
+        pg_insert(TransactionRow)
+        .values(
+            [
+                {
+                    "id": transaction_id,
+                    "dedupe_key": key,
+                    "account_ref": result.account_ref,
+                    "date": txn.date,
+                    "description": txn.description,
+                    "amount": txn.amount,
+                    "currency": txn.currency,
+                    "direction": txn.direction,
+                    "balance_after": txn.balance_after,
+                    "raw_row": txn.raw_row,
+                    "source_institution": txn.source_institution,
+                }
+                for transaction_id, key, txn in zip(ids, keys, result.transactions, strict=True)
+            ]
+        )
+        .on_conflict_do_nothing(index_elements=["dedupe_key"])
+    )
+
+    known = [key for key in keys if key is not None]
+    winners: dict[str, uuid.UUID] = {}
+    if known:
+        winners = dict(
+            session.execute(
+                select(TransactionRow.dedupe_key, TransactionRow.id).where(
+                    TransactionRow.dedupe_key.in_(known)
+                )
+            ).all()
+        )
+    return [
+        winners.get(key, transaction_id) if key is not None else transaction_id
+        for key, transaction_id in zip(keys, ids, strict=True)
+    ]
 
 
 def _duplicate(existing: StatementRow) -> HTTPException:

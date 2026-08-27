@@ -94,6 +94,10 @@ The upload response deliberately does **not** inline the transactions — a
 statement can carry thousands of rows. It returns the summary and points at the
 paginated `/transactions` endpoint instead.
 
+It carries two counts: `transaction_count` is how many rows were in the file,
+and `new_transaction_count` is how many of those were not already stored by an
+earlier statement. They differ when statement periods overlap — see below.
+
 ### Re-uploading the same file
 
 Uploads are deduplicated on the SHA-256 of the file contents, which carries a
@@ -108,6 +112,50 @@ statement that already holds it:
 The `SELECT` before the insert is only a fast path. The unique index is the
 source of truth: two concurrent identical uploads both pass that check, and the
 loser is caught as an `IntegrityError` and converted to the same `409`.
+
+### Overlapping statements
+
+File-level dedupe only catches the same *file* twice. The case that actually
+corrupts totals is two different files sharing a period:
+
+> January's export covers Jan 1–31. February's export covers Jan 15–Feb 15.
+> The bytes differ, so both are accepted — and the Jan 15–31 transactions would
+> be stored twice.
+
+So transactions carry an identity of their own, independent of the file they
+arrived in: a SHA-256 over
+`institution + account + date + direction + amount + currency + description`,
+stored as a unique `dedupe_key` (`models/identity.py`). Uploading an overlapping
+statement stores only the rows it introduces:
+
+```jsonc
+{ "transaction_count": 40,       // rows in the file
+  "new_transaction_count": 12 }  // rows not already stored
+```
+
+Three things this has to get right:
+
+- **Genuine duplicates must survive.** Two identical £3.20 coffees on the same
+  day are two real transactions. Repeats of the same fingerprint are numbered
+  within the statement, so both are stored — and an overlapping statement
+  containing the same two coffees numbers them the same way and matches both.
+  Collapsing them would be silent data loss, which is worse than the
+  double-count being fixed here.
+- **A statement still reports its whole file.** Transactions link to statements
+  through `statement_transactions`, so a row introduced by January and repeated
+  in February belongs to both. `GET /transactions?statement_id=` returns
+  everything in that file; unfiltered, each transaction appears exactly once.
+  Without the join table one of those two queries would have to be wrong.
+  `TransactionRead` therefore exposes **`statement_ids`** (a list), not a single
+  `statement_id`.
+- **Concurrent uploads must not both insert.** New transactions go in with
+  `INSERT … ON CONFLICT (dedupe_key) DO NOTHING` and the ids are resolved by a
+  follow-up `SELECT`, so a writer that loses the race links to the winner's row
+  instead of duplicating it.
+
+Statements with no `account_ref` get a NULL `dedupe_key` and are never
+deduplicated: without an account, two people's identical £4.35 coffee at the
+same bank would collapse into one row.
 
 ---
 
@@ -225,7 +273,8 @@ src/statement_normalizer/
 ├── api/routes/          statements.py, transactions.py
 ├── models/
 │   ├── schemas.py       Pydantic: Transaction, Direction, responses
-│   └── tables.py        SQLAlchemy: statements, transactions
+│   ├── identity.py      transaction fingerprinting (dedupe_key)
+│   └── tables.py        SQLAlchemy: statements, transactions, links
 └── parsers/
     ├── base.py          StatementFile, StatementParser (the contract)
     ├── registry.py      ParserRegistry, detect/parse routing
@@ -234,6 +283,9 @@ src/statement_normalizer/
 migrations/              Alembic
 tests/fixtures/          sample statement exports
 ```
+
+---
+
 ## Not included, deliberately
 
 No Redis, no Celery, no auth. PDF parsing has no dependency wired up yet —
@@ -254,13 +306,17 @@ without changing the contract.
   to prove the contract, not to read anyone's statements.
 - **No PDF adapter.** `StatementFile` detects PDFs by magic bytes so one can be
   added without touching the contract, but no PDF dependency is wired up.
-- **Dedupe is global, not per institution.** The unique index is on
-  `content_sha256` alone, so two institutions emitting a byte-identical file
-  would collide. Vanishingly unlikely with real exports.
-- **Overlapping statement periods double-count.** Dedupe is per file, not per
-  transaction, so two statements covering an overlapping range will both store
-  their shared rows. Per-transaction identity is the fix when it matters.
+- **Transaction identity leans on the description.** A bank that appends a
+  changing reference to the narrative between exports, or varies its casing
+  beyond what normalization catches, produces a different `dedupe_key` for the
+  same transaction — and it gets stored twice. This is the part most likely to
+  need revisiting against a real export. `raw_row` is retained and the
+  fingerprint is versioned (`v1`), so historical rows can be re-keyed.
+- **Dedupe is global, not per institution.** The unique index on
+  `content_sha256` is on the hash alone, so two institutions emitting a
+  byte-identical file would collide. Vanishingly unlikely with real exports.
+- **Rows stored before migration `0003` have a NULL `dedupe_key`** and never
+  match later uploads. Backfilling would have meant reimplementing the
+  fingerprint in SQL; re-uploading those statements is the intended fix.
 - **No pagination metadata.** `/transactions` takes `limit`/`offset` but returns
   a bare array with no total count.
-
-If you'd rather honour your original intent, just delete the ## Known gaps block from the above. Keep ## Not included, deliberately either way — it exists in both sides and must appear exactly once.
