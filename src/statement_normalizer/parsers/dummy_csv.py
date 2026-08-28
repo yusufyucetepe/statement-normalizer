@@ -2,30 +2,13 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from typing import ClassVar
 
 from statement_normalizer.models.schemas import Direction, StatementFormat, Transaction
 from statement_normalizer.parsers.base import StatementFile, StatementParser
+from statement_normalizer.parsers.csv_fields import normalize_header, to_date, to_decimal
 from statement_normalizer.parsers.exceptions import StatementParseError
 from statement_normalizer.parsers.registry import registry
-
-
-def _normalize_header(name: str) -> str:
-    return name.strip().lower().replace(" ", "_")
-
-
-def _to_decimal(value: str, *, institution: str, row: int, column: str) -> Decimal:
-    cleaned = value.strip().replace(",", "").replace(" ", "")
-    if cleaned.startswith("(") and cleaned.endswith(")"):  # (123.45) means negative
-        cleaned = "-" + cleaned[1:-1]
-    try:
-        return Decimal(cleaned)
-    except InvalidOperation as exc:
-        raise StatementParseError(
-            institution, f"column {column!r} is not a number: {value!r}", row=row
-        ) from exc
 
 
 @registry.register
@@ -58,14 +41,14 @@ class DummyBankCsvParser(StatementParser):
         head = file.head(1)
         if not head:
             return False
-        header = tuple(_normalize_header(c) for c in next(csv.reader(head)))
+        header = tuple(normalize_header(c) for c in next(csv.reader(head)))
         return header == self.HEADER
 
     def parse(self, file: StatementFile) -> list[Transaction]:
         reader = csv.DictReader(io.StringIO(file.text))
         if reader.fieldnames is None:
             raise StatementParseError(self.institution, "file is empty")
-        reader.fieldnames = [_normalize_header(name) for name in reader.fieldnames]
+        reader.fieldnames = [normalize_header(name) for name in reader.fieldnames]
 
         transactions: list[Transaction] = []
         for row_number, row in enumerate(reader, start=2):  # row 1 is the header
@@ -79,7 +62,7 @@ class DummyBankCsvParser(StatementParser):
         reader = csv.DictReader(io.StringIO(file.text))
         if reader.fieldnames is None:
             return None
-        reader.fieldnames = [_normalize_header(name) for name in reader.fieldnames]
+        reader.fieldnames = [normalize_header(name) for name in reader.fieldnames]
         for row in reader:
             account_ref = (row.get("account_number") or "").strip()
             if account_ref:
@@ -93,20 +76,20 @@ class DummyBankCsvParser(StatementParser):
                 self.institution, f"missing columns {missing}", row=row_number
             )
 
-        raw_date = (row["posting_date"] or "").strip()
-        try:
-            posted = datetime.strptime(raw_date, self.DATE_FORMAT).date()
-        except ValueError as exc:
-            raise StatementParseError(
-                self.institution, f"bad date {raw_date!r}, expected YYYY-MM-DD", row=row_number
-            ) from exc
+        posted = to_date(
+            row["posting_date"],
+            fmt=self.DATE_FORMAT,
+            institution=self.institution,
+            row=row_number,
+            column="posting_date",
+        )
 
-        amount = _to_decimal(
+        amount = to_decimal(
             row["amount"], institution=self.institution, row=row_number, column="amount"
         )
         balance_raw = (row["running_balance"] or "").strip()
         balance = (
-            _to_decimal(
+            to_decimal(
                 balance_raw,
                 institution=self.institution,
                 row=row_number,

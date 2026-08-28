@@ -72,3 +72,19 @@ migrations until an autogenerate produces nonsense.
 **How to apply:** run `alembic check` after every hand-written migration, not
 just after autogenerate. Treat a diff as a real finding even when the two forms
 are functionally the same.
+
+## Exact-header detection is right for a format you own, wrong for one you don't
+
+`dummy_csv.can_parse` compares the header to an exact tuple. That is correct for
+a fixture we invented: any drift is our own bug and should fail loudly. Copying
+it into `revolut_csv` would have meant a single column added to someone else's
+export turning every upload into a 422 — a format we do not control, failing
+closed on a change we have no say in.
+
+**Why:** the strictness that makes a self-owned format safe makes a third-party
+one brittle, and the failure lands on the user, not on us.
+
+**How to apply:** for external formats, require the columns you actually read to
+be *present* and tolerate extras. Pick a required set distinctive enough that
+detection stays unambiguous — for `revolut`, `product` + `started_date` +
+`completed_date` + `state`. Keep exact matching for formats you define.

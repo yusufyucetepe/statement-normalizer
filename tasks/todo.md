@@ -92,10 +92,50 @@ upload is 201 with `new_transaction_count: 0`, not 409.
   This is the `ON CONFLICT` path, not the sha256 fast path.
 - `ruff check` / `ruff format --check` clean.
 
+## Milestone 4 — first real institution adapter (done)
+
+Everything above was exercised only by `dummy_bank`, a layout we invented, so it
+fit the normalized schema by construction. `revolut` is the first format we do
+not control, and it is what turns the earlier design decisions from guesses into
+answers.
+
+Decisions: only `COMPLETED` rows become transactions; a `Fee` becomes a second
+transaction rather than being dropped or folded into the amount; detection
+matches a required *subset* of the header, not equality; `account_ref` falls back
+to `Product`, which is well defined only while the service is single-tenant.
+
+- [x] `parsers/csv_fields.py`: `normalize_header` / `to_decimal` / `to_date`
+      extracted from `dummy_csv`, so a second adapter cannot re-derive its own
+      error handling and let a bare `ValueError` escape as a 500
+- [x] `parsers/revolut_csv.py` + registration in `parsers/__init__.py`
+- [x] Anonymized fixtures: `revolut_statement.csv` (8 source rows, balances
+      reconciling to the penny with fees included), `revolut_overlap.csv`,
+      `revolut_malformed.csv`
+- [x] 8 parser tests + a registry regression guard on adding a second adapter
+- [x] Persistence test proving milestone 3's dedupe on a real format
+- [x] README: "What a real format forces", refreshed Known gaps
+
+### Verification performed
+
+- `uv run pytest` with no `TEST_DATABASE_URL` → **35 passed, 11 skipped**
+  (was 26/10). Confirms `test_dummy_parser.py` survives the helper extraction.
+- `TEST_DATABASE_URL=… uv run pytest` → **46 passed** against real Postgres 16.
+- `alembic check` → "No new upgrade operations detected". No migration was
+  expected in this milestone; one appearing would have meant the plan was wrong.
+- HTTP end to end: upload → `transaction_count` 8 / `new_transaction_count` 8;
+  the overlapping re-download → 6 / **2**; unfiltered `/transactions` returns
+  **10**, not 14; `?statement_id=` returns 8 and 6; the shared fee row lists both
+  statement ids; byte-identical re-upload still 409; `dummy_bank` still routes to
+  `dummy_bank` and `/parsers` lists both.
+- **Ledger reconciliation:** the stored GBP movements sum to exactly the balance
+  delta across the two files (1250.00 → 3123.65). That only holds because fees
+  are stored as transactions.
+- `ruff check` / `ruff format --check` clean.
+
 ## Next
 
-- [ ] First real institution adapter, with an anonymized fixture. This is the
-      point of the project and everything above now exists to support it.
 - [ ] PDF adapter (`StatementFile.is_pdf` already detects by magic bytes; no
       PDF dependency is wired up yet).
 - [ ] Pagination metadata on `/transactions` (total count alongside the rows).
+- [ ] Check the Revolut header against a real export — it is reconstructed from
+      the published format, and a mismatch means every upload 422s.

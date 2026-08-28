@@ -70,3 +70,10 @@ def test_equal_priority_matches_are_an_error_not_a_coin_flip():
         local.detect(StatementFile(filename="x.csv", content=b"anything"))
 
     assert sorted(exc.value.institutions) == ["bank_one", "bank_two"]
+
+
+def test_a_second_real_adapter_does_not_steal_the_first_ones_files(statement_file):
+    """Regression guard on growing the parser set: detection must stay per-layout,
+    not per import order."""
+    assert registry.detect(statement_file("revolut_statement.csv")).institution == "revolut"
+    assert registry.detect(statement_file("dummy_bank_statement.csv")).institution == "dummy_bank"

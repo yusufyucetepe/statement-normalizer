@@ -14,6 +14,7 @@ from statement_normalizer.parsers.exceptions import (
     StatementParseError,
 )
 from statement_normalizer.parsers.registry import ParseResult, ParserRegistry, registry
+from statement_normalizer.parsers.revolut_csv import RevolutCsvParser
 
 __all__ = [
     "AmbiguousParserMatch",
@@ -22,6 +23,7 @@ __all__ = [
     "ParseResult",
     "ParserError",
     "ParserRegistry",
+    "RevolutCsvParser",
     "StatementFile",
     "StatementParseError",
     "StatementParser",

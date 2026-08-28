@@ -148,3 +148,33 @@ def test_statement_ordering_follows_the_file_not_the_ledger(upload, client):
 
     rows = client.get("/transactions", params={"statement_id": overlap["id"]}).json()
     assert [r["date"] for r in rows] == ["2026-01-07", "2026-01-09", "2026-01-14", "2026-01-20"]
+
+
+def test_a_real_adapter_deduplicates_overlapping_downloads(upload, client, count_rows):
+    """Per-transaction identity, proven on a real institution's export.
+
+    The two Revolut downloads share three source rows — one of which carries a
+    fee and so contributes two transactions — so the overlap is four.
+    """
+    first = upload("revolut_statement.csv").json()
+    second = upload("revolut_overlap.csv").json()
+
+    assert first["source_institution"] == "revolut"
+    assert first["account_ref"] == "Current"
+    assert (first["transaction_count"], first["new_transaction_count"]) == (8, 8)
+    assert (second["transaction_count"], second["new_transaction_count"]) == (6, 2)
+
+    assert count_rows("statements") == 2
+    assert count_rows("transactions") == 10  # the union, not 8 + 6
+    assert count_rows("statement_transactions") == 14
+
+    # Each download still reports its own whole file.
+    assert len(client.get(f"/transactions?statement_id={first['id']}").json()) == 8
+    assert len(client.get(f"/transactions?statement_id={second['id']}").json()) == 6
+
+    shared = next(
+        row
+        for row in client.get("/transactions?limit=1000").json()
+        if row["description"] == "Fee: Exchanged to EUR"
+    )
+    assert sorted(shared["statement_ids"]) == sorted([first["id"], second["id"]])

@@ -4,11 +4,12 @@ A FastAPI service that accepts an uploaded bank or broker statement (CSV or PDF)
 detects which institution produced it, parses it into one normalized transaction
 schema, validates it, and stores it in Postgres.
 
-**Status: working skeleton.** Upload → detect → parse → validate → store is
-wired end to end and covered by tests against a real Postgres. What is missing
-is *parsers for real institutions* — the only adapter is `dummy_bank`, which
-exists to demonstrate the contract. Adding an institution means adding one file;
-see [The adapter pattern](#the-adapter-pattern).
+**Status: one real institution.** Upload → detect → parse → validate → store is
+wired end to end and covered by tests against a real Postgres. Two adapters are
+live: `revolut`, against an anonymized copy of its CSV export, and `dummy_bank`,
+the reference implementation that exists to demonstrate the contract. Adding an
+institution means adding one file; see
+[The adapter pattern](#the-adapter-pattern).
 
 ---
 
@@ -261,6 +262,39 @@ Tests build a throwaway `ParserRegistry()` rather than mutating global state.
 
 `dummy_csv.py` is the reference implementation — copy its shape.
 
+### What a real format forces: `revolut`
+
+`dummy_bank` is a layout we invented, so it fits the normalized schema by
+construction. Revolut's CSV export is the first one that does not, and the three
+places it pushes back are the interesting part of the adapter.
+
+**Not every row is a transaction.** The export carries `DECLINED`, `REVERTED`
+and `PENDING` rows alongside `COMPLETED` ones. A declined payment moved no
+money; a reverted one moved it and moved it back. Storing either invents a
+ledger entry that never existed, so only `COMPLETED` rows are parsed. A
+`COMPLETED` row with no completion date raises rather than falling back to the
+start date — that is the case where guessing would misdate real money.
+
+**A fee is a transaction of its own.** `Fee` is a separate column, and `Balance`
+has already subtracted it: a £100 ATM withdrawal with a £2 fee lands on a
+balance £102 lower. Dropping the fee stops stored totals reconciling with the
+balance; folding it into the amount misstates what the ATM charged. So one
+source row becomes two transactions — the withdrawal, and `Fee: Cash at ATM` —
+and the first carries no `balance_after`, because the intermediate balance is
+not a real position in the ledger. One row expanding into several is something
+PDF and broker exports will need too.
+
+**Detection matches a required subset, not the exact header.** `dummy_csv`
+demands an exact header tuple, which is right for a format we own and wrong for
+one we don't: a column added to someone else's export would turn every upload
+into a 422. `RevolutCsvParser` requires its ten columns to be *present* and
+tolerates extras. `product` + `started_date` + `completed_date` + `state`
+together are distinctive enough that no other institution collides, so detection
+stays unambiguous at equal priority.
+
+One consequence worth knowing: because fees expand into extra rows,
+`transaction_count` counts transactions produced, not lines in the file.
+
 ---
 
 ## Layout
@@ -279,6 +313,8 @@ src/statement_normalizer/
     ├── base.py          StatementFile, StatementParser (the contract)
     ├── registry.py      ParserRegistry, detect/parse routing
     ├── exceptions.py    NoMatchingParser, AmbiguousParserMatch, StatementParseError
+    ├── csv_fields.py    shared money/date cell parsing, with row-level errors
+    ├── revolut_csv.py   Revolut CSV export
     └── dummy_csv.py     reference adapter
 migrations/              Alembic
 tests/fixtures/          sample statement exports
@@ -302,8 +338,18 @@ without changing the contract.
 
 ## Known gaps
 
-- **No real institution adapters yet.** `dummy_bank` is the only one; it exists
-  to prove the contract, not to read anyone's statements.
+- **Only one real institution.** `revolut` is the only adapter for a format we
+  did not invent; `dummy_bank` remains as the reference implementation.
+- **Revolut's header is reconstructed from its published format, not from a real
+  export.** If the live column names differ, `can_parse` returns False and the
+  upload 422s — loud rather than corrupting, and a one-line fix, but it is the
+  first thing to check against a real download.
+- **`revolut` uses `Product` as its account reference.** The export carries no
+  IBAN or account number, so `Current` is the closest thing to an account scope.
+  Returning nothing instead would leave `dedupe_key` NULL and let every
+  overlapping re-download double-count. `revolut|Current` is well defined only
+  because this service is single-tenant by construction; revisit it the day it
+  grows users.
 - **No PDF adapter.** `StatementFile` detects PDFs by magic bytes so one can be
   added without touching the contract, but no PDF dependency is wired up.
 - **Transaction identity leans on the description.** A bank that appends a
