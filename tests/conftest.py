@@ -16,14 +16,34 @@ PROJECT_ROOT = Path(__file__).parent.parent
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
 
+def _content_type(name: str) -> str:
+    return "application/pdf" if name.endswith(".pdf") else "text/csv"
+
+
 @pytest.fixture
 def statement_file():
     """Load a fixture file into the value object parsers actually receive."""
 
     def _load(name: str) -> StatementFile:
-        return StatementFile.from_path(FIXTURES / name, content_type="text/csv")
+        return StatementFile.from_path(FIXTURES / name, content_type=_content_type(name))
 
     return _load
+
+
+@pytest.fixture(scope="session")
+def pdf_generator():
+    """The committed fixture generator, so tests can build edge-case PDFs.
+
+    Loaded by path because `tests/fixtures` is a data directory, not a package.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "generate_dummy_bank_pdf", FIXTURES / "generate_dummy_bank_pdf.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture(scope="session")
@@ -87,7 +107,9 @@ def upload(client):
 
     def _upload(name: str):
         with open(FIXTURES / name, "rb") as handle:
-            return client.post("/statements/upload", files={"file": (name, handle, "text/csv")})
+            return client.post(
+                "/statements/upload", files={"file": (name, handle, _content_type(name))}
+            )
 
     return _upload
 

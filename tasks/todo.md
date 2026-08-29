@@ -132,10 +132,54 @@ to `Product`, which is well defined only while the service is single-tenant.
   are stored as transactions.
 - `ruff check` / `ruff format --check` clean.
 
+## Milestone 5 — PDF adapter (done)
+
+The last format the contract claimed to support without ever proving it.
+`StatementFile` detected PDFs by magic bytes from milestone 1, but nothing
+parsed one, so the `supported_formats` machinery had never been exercised.
+
+Decisions: `pdfplumber` over a text-only extractor, because word coordinates are
+what distinguish a debit column from a credit one; the registry is keyed on
+(institution, format), so `dummy_bank` gets one adapter per layout rather than
+one class with a branch in it.
+
+- [x] `pdfplumber` dependency; `StatementFile.pdf_words` / `.pdf_text`, cached so
+      detection cost does not scale with the parser set, and a `Word` value type
+      carrying `x0`/`x1`/`top`
+- [x] `ParserRegistry.register` accepts a repeated institution when the adapters'
+      formats are disjoint; same institution *and* format still fails at import
+- [x] `parsers/dummy_pdf.py`: column geometry read off the statement's own header
+      row, money cells matched on content *and* position, wrapped narratives
+      folded in by vertical proximity, summary lines and footers dropped, a row
+      in two money columns raised rather than guessed
+- [x] `tests/fixtures/generate_dummy_bank_pdf.py` — stdlib-only, committed
+      alongside the PDF it writes so the fixture is reviewable, and reused by
+      tests to synthesize edge-case PDFs
+- [x] 9 PDF parser tests, 3 registry tests, 1 cross-format persistence test
+- [x] README: "What a PDF forces", revised registration decision, Known gaps
+
+### Verification performed
+
+- `uv run pytest` with no `TEST_DATABASE_URL` → **47 passed, 12 skipped**.
+- `TEST_DATABASE_URL=… uv run pytest` → **59 passed** against real Postgres 16.
+- `alembic check` → "No new upgrade operations detected". No migration expected;
+  this milestone touches no schema.
+- Fixture regeneration is deterministic: re-running the generator produces a
+  byte-identical PDF.
+- **Cross-format dedupe, end to end.** Upload `dummy_bank_statement.csv` (4/4),
+  then `dummy_bank_statement.pdf` (7 rows, **5 new**) → 9 transactions stored,
+  not 11. The two shared rows each list both statement ids, and `?statement_id=`
+  still returns 4 and 7. The same transaction arriving as a CSV cell and as a
+  word at a position on a page is stored once.
+- `/parsers` lists three adapters, `dummy_bank` twice with disjoint formats.
+- Byte-identical PDF re-upload → 409; a PDF that is not a statement → 422.
+- `ruff check` / `ruff format --check` clean.
+
 ## Next
 
-- [ ] PDF adapter (`StatementFile.is_pdf` already detects by magic bytes; no
-      PDF dependency is wired up yet).
 - [ ] Pagination metadata on `/transactions` (total count alongside the rows).
 - [ ] Check the Revolut header against a real export — it is reconstructed from
       the published format, and a mismatch means every upload 422s.
+- [ ] A real institution's PDF. `dummy_pdf` is built against a fixture we
+      generate, so its layout assumptions (a header row, one line per
+      transaction plus wraps) have not met a real statement.

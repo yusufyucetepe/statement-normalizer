@@ -77,3 +77,40 @@ def test_a_second_real_adapter_does_not_steal_the_first_ones_files(statement_fil
     not per import order."""
     assert registry.detect(statement_file("revolut_statement.csv")).institution == "revolut"
     assert registry.detect(statement_file("dummy_bank_statement.csv")).institution == "dummy_bank"
+
+
+def test_one_institution_may_register_several_disjoint_formats():
+    """A bank's CSV export and its PDF statement are two unrelated layouts, so
+    they get two adapters rather than one class with a branch in it."""
+    local = ParserRegistry()
+    local.register(_clone("bank", priority=100))
+    pdf_only = type(
+        "BankPdf",
+        (_AlwaysMatches,),
+        {"institution": "bank", "supported_formats": frozenset({StatementFormat.PDF})},
+    )
+
+    local.register(pdf_only)
+
+    assert [sorted(f.value for f in p.supported_formats) for p in local.parsers] == [
+        ["csv"],
+        ["pdf"],
+    ]
+
+
+def test_registering_the_same_institution_and_format_twice_still_fails():
+    local = ParserRegistry()
+    local.register(_clone("bank", priority=100))
+
+    with pytest.raises(ValueError) as exc:
+        local.register(_clone("bank", priority=100))
+
+    assert "csv" in str(exc.value)
+
+
+def test_a_pdf_and_a_csv_from_one_institution_route_to_different_adapters(statement_file):
+    csv_parser = registry.detect(statement_file("dummy_bank_statement.csv"))
+    pdf_parser = registry.detect(statement_file("dummy_bank_statement.pdf"))
+
+    assert csv_parser.institution == pdf_parser.institution == "dummy_bank"
+    assert type(csv_parser) is not type(pdf_parser)

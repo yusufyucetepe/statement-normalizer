@@ -1,0 +1,95 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1793 >>
+stream
+BT /F1 14 Tf 1 0 0 1 50.00 782.00 Tm (DUMMY BANK PLC) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 760.00 Tm (Statement of Account) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 738.00 Tm (Account Number: GB00DUMY12345678) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 724.00 Tm (Statement Period: 07 Jan 2026 to 31 Jan 2026) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 710.00 Tm (All amounts in GBP) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 672.00 Tm (Date) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 672.00 Tm (Description) Tj ET
+BT /F1 9 Tf 1 0 0 1 349.98 672.00 Tm (Debit) Tj ET
+BT /F1 9 Tf 1 0 0 1 419.98 672.00 Tm (Credit) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 672.00 Tm (Balance) Tj ET
+BT /F1 9 Tf 1 0 0 1 270.00 42.00 Tm (Page 1 of 2) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 644.00 Tm (Balance brought forward) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 644.00 Tm (3,408.53) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 630.00 Tm (07 Jan 2026) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 630.00 Tm (CARD PAYMENT TO UTILITIES CO) Tj ET
+BT /F1 9 Tf 1 0 0 1 347.48 630.00 Tm (128.90) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 630.00 Tm (3,279.63) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 616.00 Tm (09 Jan 2026) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 616.00 Tm (REFUND ELECTRONICS LTD) Tj ET
+BT /F1 9 Tf 1 0 0 1 427.48 616.00 Tm (64.99) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 616.00 Tm (3,344.62) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 602.00 Tm (13 Jan 2026) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 602.00 Tm (DIRECT DEBIT COUNCIL TAX) Tj ET
+BT /F1 9 Tf 1 0 0 1 347.48 602.00 Tm (189.00) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 602.00 Tm (3,155.62) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 588.00 Tm (MONTHLY INSTALMENT REF 88213) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 574.00 Tm (17 Jan 2026) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 574.00 Tm (SUPERMARKET GROCERIES) Tj ET
+BT /F1 9 Tf 1 0 0 1 352.48 574.00 Tm (76.41) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 574.00 Tm (3,079.21) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 1374 >>
+stream
+BT /F1 9 Tf 1 0 0 1 50.00 782.00 Tm (DUMMY BANK PLC) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 768.00 Tm (Account Number: GB00DUMY12345678 \(continued\)) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 732.00 Tm (Date) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 732.00 Tm (Description) Tj ET
+BT /F1 9 Tf 1 0 0 1 349.98 732.00 Tm (Debit) Tj ET
+BT /F1 9 Tf 1 0 0 1 419.98 732.00 Tm (Credit) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 732.00 Tm (Balance) Tj ET
+BT /F1 9 Tf 1 0 0 1 270.00 42.00 Tm (Page 2 of 2) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 704.00 Tm (Balance brought forward) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 704.00 Tm (3,079.21) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 690.00 Tm (22 Jan 2026) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 690.00 Tm (TRANSFER FROM SAVINGS) Tj ET
+BT /F1 9 Tf 1 0 0 1 422.48 690.00 Tm (500.00) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 690.00 Tm (3,579.21) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 676.00 Tm (28 Jan 2026) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 676.00 Tm (GYM MEMBERSHIP) Tj ET
+BT /F1 9 Tf 1 0 0 1 352.48 676.00 Tm (39.99) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 676.00 Tm (3,539.22) Tj ET
+BT /F1 9 Tf 1 0 0 1 50.00 662.00 Tm (31 Jan 2026) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 662.00 Tm (INTEREST PAID) Tj ET
+BT /F1 9 Tf 1 0 0 1 432.49 662.00 Tm (1.27) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 662.00 Tm (3,540.49) Tj ET
+BT /F1 9 Tf 1 0 0 1 120.00 634.00 Tm (Closing balance) Tj ET
+BT /F1 9 Tf 1 0 0 1 504.97 634.00 Tm (3,540.49) Tj ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000191 00000 n 
+0000000317 00000 n 
+0000002162 00000 n 
+0000002288 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+3714
+%%EOF

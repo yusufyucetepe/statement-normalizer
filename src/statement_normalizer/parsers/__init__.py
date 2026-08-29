@@ -5,8 +5,9 @@ populates the registry. Discovery is deliberately explicit — no package
 scanning — so the live parser set stays greppable.
 """
 
-from statement_normalizer.parsers.base import StatementFile, StatementParser
+from statement_normalizer.parsers.base import StatementFile, StatementParser, Word
 from statement_normalizer.parsers.dummy_csv import DummyBankCsvParser
+from statement_normalizer.parsers.dummy_pdf import DummyBankPdfParser
 from statement_normalizer.parsers.exceptions import (
     AmbiguousParserMatch,
     NoMatchingParser,
@@ -19,6 +20,7 @@ from statement_normalizer.parsers.revolut_csv import RevolutCsvParser
 __all__ = [
     "AmbiguousParserMatch",
     "DummyBankCsvParser",
+    "DummyBankPdfParser",
     "NoMatchingParser",
     "ParseResult",
     "ParserError",
@@ -27,5 +29,6 @@ __all__ = [
     "StatementFile",
     "StatementParseError",
     "StatementParser",
+    "Word",
     "registry",
 ]

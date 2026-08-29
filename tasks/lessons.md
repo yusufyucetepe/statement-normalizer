@@ -88,3 +88,22 @@ one brittle, and the failure lands on the user, not on us.
 be *present* and tolerate extras. Pick a required set distinctive enough that
 detection stays unambiguous — for `revolut`, `product` + `started_date` +
 `completed_date` + `state`. Keep exact matching for formats you define.
+
+## A uniqueness rule should name what actually has to be unique
+
+`ParserRegistry.register` rejected a second adapter for an institution. That
+looked like "one adapter per institution" but the real invariant is narrower:
+two adapters must never claim the *same file*. Since `candidates()` already
+filters on format, two adapters for one institution covering disjoint formats
+can never both claim anything — the rule was rejecting a case it had no reason
+to. It only surfaced when `dummy_bank` needed a PDF adapter, and the workarounds
+on offer were both bad: invent a fake institution, or branch on format inside
+one class and give up a file per layout.
+
+**Why:** a uniqueness rule that is broader than its invariant does not fail
+loudly — it quietly pushes the next feature into a worse shape.
+
+**How to apply:** when a registration or constraint rejects something, check
+whether the rejected case can actually cause the harm the rule exists to
+prevent. Key the rule on the full identity that matters — here (institution,
+format) — rather than on the convenient prefix of it.

@@ -31,22 +31,44 @@ class ParserRegistry:
         self._parsers: list[StatementParser] = []
 
     def register(self, parser_cls: type[StatementParser]) -> type[StatementParser]:
-        """Class decorator. Instantiates the adapter once; adapters are stateless."""
+        """Class decorator. Instantiates the adapter once; adapters are stateless.
+
+        An institution may register more than once as long as the adapters cover
+        *disjoint* formats: a bank's CSV export and its PDF statement are two
+        unrelated layouts, and folding both into one class to satisfy a
+        one-adapter-per-institution rule would mean a file per institution
+        instead of a file per layout. Two adapters claiming the same institution
+        *and* format is still a bug, and still fails loudly at import time.
+        """
         if not issubclass(parser_cls, StatementParser):
             raise TypeError(f"{parser_cls.__name__} does not implement StatementParser")
         institution = getattr(parser_cls, "institution", None)
         if not institution:
             raise TypeError(f"{parser_cls.__name__} must define a non-empty `institution`")
-        if any(p.institution == institution for p in self._parsers):
-            raise ValueError(f"a parser for {institution!r} is already registered")
+        for existing in self._parsers:
+            if existing.institution != institution:
+                continue
+            clash = existing.supported_formats & parser_cls.supported_formats
+            if clash:
+                raise ValueError(
+                    f"a parser for {institution!r} already handles "
+                    f"{sorted(fmt.value for fmt in clash)}"
+                )
         self._parsers.append(parser_cls())
         return parser_cls
 
     @property
     def parsers(self) -> list[StatementParser]:
-        """Registered adapters, highest priority first, then by institution for
-        a stable order that does not depend on import sequence."""
-        return sorted(self._parsers, key=lambda p: (-p.priority, p.institution))
+        """Registered adapters, highest priority first, then by institution and
+        format for a stable order that does not depend on import sequence."""
+        return sorted(
+            self._parsers,
+            key=lambda p: (
+                -p.priority,
+                p.institution,
+                sorted(f.value for f in p.supported_formats),
+            ),
+        )
 
     def candidates(self, file: StatementFile) -> list[StatementParser]:
         """Every adapter that claims the file, best first."""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import cached_property
@@ -9,6 +10,24 @@ from typing import ClassVar
 from statement_normalizer.models.schemas import StatementFormat, Transaction
 
 _PDF_MAGIC = b"%PDF-"
+
+
+@dataclass(frozen=True)
+class Word:
+    """One word on a PDF page, with the geometry that gives it meaning.
+
+    `top` is measured from the top of the page, so lines sort naturally; `x0`
+    and `x1` are what let an adapter say which column a number belongs to.
+    """
+
+    text: str
+    x0: float
+    x1: float
+    top: float
+
+    @property
+    def center(self) -> float:
+        return (self.x0 + self.x1) / 2
 
 
 @dataclass
@@ -75,6 +94,36 @@ class StatementFile:
             if len(out) >= lines:
                 break
         return out
+
+    @cached_property
+    def pdf_words(self) -> list[list[Word]]:
+        """Words per page, positioned — `[]` when this is not a PDF.
+
+        Cached for the same reason `text` is: detection hands every adapter the
+        same file, and extracting a PDF once per adapter would make detection
+        cost scale with the size of the parser set.
+
+        Positions are the point of it. A statement PDF is a table, and which
+        column a number sits in is the only thing distinguishing a debit from a
+        credit — text alone throws that away.
+        """
+        if not self.is_pdf:
+            return []
+        import pdfplumber  # imported lazily: CSV uploads should not pay for it
+
+        with pdfplumber.open(io.BytesIO(self.content)) as pdf:
+            return [
+                [
+                    Word(text=w["text"], x0=w["x0"], x1=w["x1"], top=w["top"])
+                    for w in page.extract_words()
+                ]
+                for page in pdf.pages
+            ]
+
+    @cached_property
+    def pdf_text(self) -> str:
+        """The PDF's words as plain text, one line per page. For cheap sniffing."""
+        return "\n".join(" ".join(word.text for word in page) for page in self.pdf_words)
 
 
 class StatementParser(ABC):

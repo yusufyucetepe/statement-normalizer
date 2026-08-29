@@ -178,3 +178,29 @@ def test_a_real_adapter_deduplicates_overlapping_downloads(upload, client, count
         if row["description"] == "Fee: Exchanged to EUR"
     )
     assert sorted(shared["statement_ids"]) == sorted([first["id"], second["id"]])
+
+
+def test_the_same_transaction_in_two_formats_is_stored_once(upload, client, count_rows):
+    """Identity is a property of the transaction, not of the file it arrived in.
+
+    The CSV export and the PDF statement cover the same account and overlap on
+    2026-01-07 and 2026-01-09. Those two rows are stored once, even though one
+    arrived as a CSV cell and the other as a word at a position on a page.
+    """
+    csv_statement = upload("dummy_bank_statement.csv").json()
+    pdf_statement = upload("dummy_bank_statement.pdf").json()
+
+    assert pdf_statement["format"] == "pdf"
+    assert pdf_statement["source_institution"] == "dummy_bank"
+    assert csv_statement["account_ref"] == pdf_statement["account_ref"] == "GB00DUMY12345678"
+
+    assert (csv_statement["transaction_count"], csv_statement["new_transaction_count"]) == (4, 4)
+    assert (pdf_statement["transaction_count"], pdf_statement["new_transaction_count"]) == (7, 5)
+    assert count_rows("transactions") == 9  # 4 + 7 - 2 shared
+
+    shared = next(
+        row
+        for row in client.get("/transactions?limit=1000").json()
+        if row["description"] == "CARD PAYMENT TO UTILITIES CO"
+    )
+    assert sorted(shared["statement_ids"]) == sorted([csv_statement["id"], pdf_statement["id"]])

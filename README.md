@@ -4,11 +4,12 @@ A FastAPI service that accepts an uploaded bank or broker statement (CSV or PDF)
 detects which institution produced it, parses it into one normalized transaction
 schema, validates it, and stores it in Postgres.
 
-**Status: one real institution.** Upload → detect → parse → validate → store is
-wired end to end and covered by tests against a real Postgres. Two adapters are
-live: `revolut`, against an anonymized copy of its CSV export, and `dummy_bank`,
-the reference implementation that exists to demonstrate the contract. Adding an
-institution means adding one file; see
+**Status: CSV and PDF, one real institution.** Upload → detect → parse →
+validate → store is wired end to end and covered by tests against a real
+Postgres. Three adapters are live: `revolut` (CSV, against an anonymized copy of
+its export) and `dummy_bank` in both CSV and PDF, the reference implementations
+that demonstrate the contract. Adding an institution — or a second format for
+one — means adding one file; see
 [The adapter pattern](#the-adapter-pattern).
 
 ---
@@ -75,7 +76,7 @@ migrations, real JSONB, and real `NUMERIC`, and still leave no residue.
 
 | Method | Path                 | Notes |
 |--------|----------------------|-------|
-| `POST` | `/statements/upload` | Multipart upload. Detects, parses, validates and stores. **201** with the statement summary and a `Location` header; **409** if these exact bytes were uploaded before; **422** if no parser recognizes the file or a claimed file is malformed. |
+| `POST` | `/statements/upload` | Multipart upload of a CSV or PDF. Detects, parses, validates and stores. **201** with the statement summary and a `Location` header; **409** if these exact bytes were uploaded before; **422** if no parser recognizes the file or a claimed file is malformed. |
 | `GET`  | `/transactions`      | Filters: `date_from`, `date_to`, `direction` (`credit`/`debit`), `institution`, `statement_id`, `limit`, `offset`. |
 | `GET`  | `/parsers`           | The live adapters, in the order detection considers them. |
 | `GET`  | `/health`            | Liveness. |
@@ -243,10 +244,14 @@ that anything went wrong. `priority` is the explicit escape hatch when a
 specific adapter must beat a generic one (a bank-specific CSV over a generic
 OFX-ish CSV), without anyone reordering imports.
 
-**4. Registration is explicit.**
+**4. Registration is explicit, and keyed on institution *and* format.**
 Adapters register with `@registry.register` and are imported in
 `parsers/__init__.py`. No `pkgutil` package scanning: the live parser set stays
-greppable, and duplicate-institution registration fails loudly at import time.
+greppable. An institution may register more than once as long as the adapters
+cover disjoint formats — a bank's CSV export and its PDF statement are two
+unrelated documents, and one class with a branch in it would mean a file per
+*institution* rather than a file per *layout*. Two adapters claiming the same
+institution and format is still a bug, and still fails loudly at import time.
 Tests build a throwaway `ParserRegistry()` rather than mutating global state.
 
 ### Adding a new institution
@@ -295,6 +300,50 @@ stays unambiguous at equal priority.
 One consequence worth knowing: because fees expand into extra rows,
 `transaction_count` counts transactions produced, not lines in the file.
 
+### What a PDF forces: `dummy_bank`, again
+
+A statement PDF is a table with no table markup. `dummy_bank` therefore has two
+adapters — `dummy_csv.py` and `dummy_pdf.py` — under one institution, which is
+what the registration rule above exists for.
+
+**Position is the data.** The amounts in a statement PDF carry no sign; a debit
+is a debit because it is printed in the Debit column. So `StatementFile.pdf_words`
+exposes each word with its `x0`/`x1`/`top` rather than a flat string, and the
+adapter reads the column geometry off the statement's *own header row* instead of
+hard-coding x positions. Money cells are then matched on content *and* position:
+proximity alone drags the tail of a long narrative into the Debit column, and a
+reference number mid-narrative into whatever column it drifts under.
+
+**Most lines are not transactions.** A page carries a masthead, a repeated
+column header, `Balance brought forward`, `Closing balance`, and a footer that
+sits squarely inside the description column. The rules that sort them out:
+
+| Line has | Verdict |
+|----------|---------|
+| a parsable date | a transaction |
+| no date, but an amount | a summary line — skipped |
+| no date, no amount, directly under a transaction | a wrapped narrative — appended |
+| anything else | skipped |
+
+"Directly under" is a vertical-gap test, and it is what keeps the page footer
+from being glued onto the last transaction above it.
+
+**A row in both money columns is an error, not a guess.** The columns *are* the
+sign, so a line read as both a debit and a credit means the geometry was
+misread; choosing a side would put real money on the wrong one.
+
+Because identity is content-based, a PDF statement overlapping a CSV export of
+the same account deduplicates against it — the same transaction stored once,
+whether it arrived as a CSV cell or as a word at a position on a page.
+
+The fixture is generated by `tests/fixtures/generate_dummy_bank_pdf.py`, stdlib
+only and committed alongside the PDF it writes, so the fixture is reviewable
+rather than an opaque binary. Regenerate it with:
+
+```bash
+uv run python tests/fixtures/generate_dummy_bank_pdf.py
+```
+
 ---
 
 ## Layout
@@ -315,7 +364,8 @@ src/statement_normalizer/
     ├── exceptions.py    NoMatchingParser, AmbiguousParserMatch, StatementParseError
     ├── csv_fields.py    shared money/date cell parsing, with row-level errors
     ├── revolut_csv.py   Revolut CSV export
-    └── dummy_csv.py     reference adapter
+    ├── dummy_csv.py     reference adapter (CSV)
+    └── dummy_pdf.py     reference adapter (PDF), column geometry from word positions
 migrations/              Alembic
 tests/fixtures/          sample statement exports
 ```
@@ -324,9 +374,9 @@ tests/fixtures/          sample statement exports
 
 ## Not included, deliberately
 
-No Redis, no Celery, no auth. PDF parsing has no dependency wired up yet —
-`StatementFile` detects PDFs by magic bytes so a PDF adapter can be added
-without changing the contract.
+No Redis, no Celery, no auth. PDF text extraction uses `pdfplumber`, chosen over
+a lighter text-only extractor because word coordinates are what distinguish a
+debit column from a credit one.
 
 ## Motivation
 
@@ -350,8 +400,11 @@ without changing the contract.
   overlapping re-download double-count. `revolut|Current` is well defined only
   because this service is single-tenant by construction; revisit it the day it
   grows users.
-- **No PDF adapter.** `StatementFile` detects PDFs by magic bytes so one can be
-  added without touching the contract, but no PDF dependency is wired up.
+- **The PDF adapter is text-layer only.** A scanned or image-only statement
+  yields no words and is not recognized; OCR is out of scope.
+- **PDF column geometry comes from a header row.** A statement whose table has
+  no `Date`/`Description`/`Debit`/`Credit`/`Balance` header — or which splits a
+  transaction across a page break — is not handled.
 - **Transaction identity leans on the description.** A bank that appends a
   changing reference to the narrative between exports, or varies its casing
   beyond what normalization catches, produces a different `dedupe_key` for the
