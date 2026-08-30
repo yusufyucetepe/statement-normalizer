@@ -98,3 +98,19 @@ class StatementRead(BaseModel):
         "`transaction_count` when this statement overlaps another.",
     )
     uploaded_at: datetime
+
+
+class TransactionPage(BaseModel):
+    """One page of `GET /transactions`, with the size of the full result set.
+
+    An envelope rather than a bare array because `limit`/`offset` are useless
+    without knowing when to stop: a client receiving a full page cannot tell a
+    last page from a middle one, and asking for one more page to find out is a
+    request that exists only because the response withheld a number the query
+    already had to compute.
+    """
+
+    items: list[TransactionRead]
+    total: int = Field(description="Rows matching the filters, ignoring limit/offset.")
+    limit: int
+    offset: int

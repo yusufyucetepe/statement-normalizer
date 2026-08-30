@@ -3,18 +3,18 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from statement_normalizer.api.deps import SessionDep
-from statement_normalizer.models.schemas import Direction, TransactionRead
+from statement_normalizer.models.schemas import Direction, TransactionPage
 from statement_normalizer.models.tables import StatementTransaction as LinkRow
 from statement_normalizer.models.tables import Transaction as TransactionRow
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 
-@router.get("", response_model=list[TransactionRead])
+@router.get("", response_model=TransactionPage)
 def list_transactions(
     session: SessionDep,
     date_from: Annotated[date | None, Query(description="Inclusive lower bound on date.")] = None,
@@ -24,8 +24,11 @@ def list_transactions(
     statement_id: Annotated[UUID | None, Query(description="One uploaded statement.")] = None,
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> list[TransactionRow]:
+) -> TransactionPage:
     """List stored transactions, newest first, with date and type filters.
+
+    Returns one page of rows plus `total`, the number matching the filters
+    before `limit`/`offset` are applied.
 
     Each transaction appears once however many statements contained it, so
     overlapping statement periods do not double-count. Filtering by
@@ -37,7 +40,7 @@ def list_transactions(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "date_from must not be after date_to"
         )
 
-    stmt = select(TransactionRow).options(selectinload(TransactionRow.statements))
+    stmt = select(TransactionRow)
     if date_from:
         stmt = stmt.where(TransactionRow.date >= date_from)
     if date_to:
@@ -60,5 +63,12 @@ def list_transactions(
             TransactionRow.date.desc(), TransactionRow.created_at, TransactionRow.id
         )
 
-    stmt = stmt.limit(limit).offset(offset)
-    return list(session.scalars(stmt))
+    # A second query rather than `count(*) OVER ()` alongside the rows: a window
+    # function returns the total on each row, so an offset past the end returns
+    # no rows and therefore no total — exactly the request that most needs one.
+    total = session.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
+
+    rows = session.scalars(
+        stmt.options(selectinload(TransactionRow.statements)).limit(limit).offset(offset)
+    )
+    return TransactionPage(items=list(rows), total=total, limit=limit, offset=offset)

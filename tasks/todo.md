@@ -175,9 +175,42 @@ one class with a branch in it.
 - Byte-identical PDF re-upload → 409; a PDF that is not a statement → 422.
 - `ruff check` / `ruff format --check` clean.
 
+## Milestone 6 — pagination metadata (done)
+
+Decision: an envelope (`{items, total, limit, offset}`) rather than an
+`X-Total-Count` header. The header keeps the body a bare array and so is not a
+breaking change, but it is invisible in OpenAPI and in every generated client,
+and `total` is not metadata about the transport — it is part of the answer.
+The endpoint has no external consumers yet, so this is the cheapest moment it
+will ever be to change the shape.
+
+`total` comes from a second `COUNT` query rather than `count(*) OVER ()` beside
+the rows: the window function returns the total *on each row*, so an offset past
+the end returns no rows and therefore no total — the one request that most needs
+one.
+
+- [x] `TransactionPage` schema; `GET /transactions` returns it
+- [x] Count query built from the same filtered select, with ordering stripped
+- [x] `tests/test_transactions_api.py` — 6 tests, including the offset-past-the-end
+      case and a full walk proving paging visits every row exactly once
+- [x] Existing `/transactions` assertions moved to `["items"]`
+- [x] README: the envelope and what it costs; Known gaps swaps "no pagination
+      metadata" for offset-vs-keyset
+
+### Verification performed
+
+- `uv run pytest` with no `TEST_DATABASE_URL` → **47 passed, 18 skipped**.
+- `TEST_DATABASE_URL=… uv run pytest` → **65 passed** against real Postgres 16
+  (59 before, plus the 6 new).
+- `alembic check` → "No new upgrade operations detected". No schema change.
+- HTTP end to end: two statements (4 + 2 rows), then `?limit=2` →
+  `total 6, limit 2, offset 0` with 2 items; `?offset=100` → `total 6` with 0
+  items; `?direction=debit` → `total 3`. `/openapi.json` resolves the 200 to
+  `#/components/schemas/TransactionPage`.
+- `ruff check` / `ruff format --check` clean.
+
 ## Next
 
-- [ ] Pagination metadata on `/transactions` (total count alongside the rows).
 - [ ] Check the Revolut header against a real export — it is reconstructed from
       the published format, and a mismatch means every upload 422s.
 - [ ] A real institution's PDF. `dummy_pdf` is built against a fixture we

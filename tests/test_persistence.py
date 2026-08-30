@@ -17,7 +17,7 @@ def test_upload_stores_the_statement_and_its_transactions(upload, client, count_
     assert count_rows("statements") == 1
     assert count_rows("transactions") == 4
 
-    rows = client.get(response.headers["Location"]).json()
+    rows = client.get(response.headers["Location"]).json()["items"]
     assert len(rows) == 4
     credit = next(r for r in rows if r["description"] == "ACME PAYROLL JAN")
     assert Decimal(credit["amount"]) == Decimal("2500.00")
@@ -71,13 +71,13 @@ def test_statement_id_filter_scopes_results_to_one_statement(upload, client):
     january = upload("dummy_bank_statement.csv").json()
     february = upload("dummy_bank_february.csv").json()
 
-    jan_rows = client.get("/transactions", params={"statement_id": january["id"]}).json()
-    feb_rows = client.get("/transactions", params={"statement_id": february["id"]}).json()
+    jan_rows = client.get("/transactions", params={"statement_id": january["id"]}).json()["items"]
+    feb_rows = client.get("/transactions", params={"statement_id": february["id"]}).json()["items"]
 
     assert len(jan_rows) == 4
     assert len(feb_rows) == 2
     assert all(r["statement_ids"] == [february["id"]] for r in feb_rows)
-    assert len(client.get("/transactions").json()) == 6
+    assert len(client.get("/transactions").json()["items"]) == 6
 
 
 def test_an_overlapping_statement_stores_the_union_not_the_sum(upload, client, count_rows):
@@ -99,11 +99,12 @@ def test_an_overlapping_statement_stores_the_union_not_the_sum(upload, client, c
     assert count_rows("statement_transactions") == 8  # every row of both files
 
     # Each statement still reports its own file in full.
-    assert len(client.get("/transactions", params={"statement_id": january["id"]}).json()) == 4
-    assert len(client.get("/transactions", params={"statement_id": body["id"]}).json()) == 4
+    for statement in (january, body):
+        page = client.get("/transactions", params={"statement_id": statement["id"]}).json()
+        assert len(page["items"]) == 4
 
     # And the unfiltered list counts each transaction exactly once.
-    rows = client.get("/transactions").json()
+    rows = client.get("/transactions").json()["items"]
     assert len(rows) == 6
     shared = next(r for r in rows if r["description"] == "REFUND ELECTRONICS LTD")
     assert sorted(shared["statement_ids"]) == sorted([january["id"], body["id"]])
@@ -136,7 +137,7 @@ def test_repeated_transactions_in_one_statement_are_all_stored(upload, client, c
     assert response.json()["new_transaction_count"] == 3
     assert count_rows("transactions") == 3
 
-    rows = client.get("/transactions").json()
+    rows = client.get("/transactions").json()["items"]
     same_day = [r for r in rows if r["date"] == "2026-03-02"]
     assert len(same_day) == 2
     assert all(Decimal(r["amount"]) == Decimal("3.20") for r in same_day)
@@ -146,7 +147,7 @@ def test_statement_ordering_follows_the_file_not_the_ledger(upload, client):
     """Within a statement, rows come back in file order."""
     overlap = upload("dummy_bank_overlap.csv").json()
 
-    rows = client.get("/transactions", params={"statement_id": overlap["id"]}).json()
+    rows = client.get("/transactions", params={"statement_id": overlap["id"]}).json()["items"]
     assert [r["date"] for r in rows] == ["2026-01-07", "2026-01-09", "2026-01-14", "2026-01-20"]
 
 
@@ -169,12 +170,12 @@ def test_a_real_adapter_deduplicates_overlapping_downloads(upload, client, count
     assert count_rows("statement_transactions") == 14
 
     # Each download still reports its own whole file.
-    assert len(client.get(f"/transactions?statement_id={first['id']}").json()) == 8
-    assert len(client.get(f"/transactions?statement_id={second['id']}").json()) == 6
+    assert len(client.get(f"/transactions?statement_id={first['id']}").json()["items"]) == 8
+    assert len(client.get(f"/transactions?statement_id={second['id']}").json()["items"]) == 6
 
     shared = next(
         row
-        for row in client.get("/transactions?limit=1000").json()
+        for row in client.get("/transactions?limit=1000").json()["items"]
         if row["description"] == "Fee: Exchanged to EUR"
     )
     assert sorted(shared["statement_ids"]) == sorted([first["id"], second["id"]])
@@ -200,7 +201,7 @@ def test_the_same_transaction_in_two_formats_is_stored_once(upload, client, coun
 
     shared = next(
         row
-        for row in client.get("/transactions?limit=1000").json()
+        for row in client.get("/transactions?limit=1000").json()["items"]
         if row["description"] == "CARD PAYMENT TO UTILITIES CO"
     )
     assert sorted(shared["statement_ids"]) == sorted([csv_statement["id"], pdf_statement["id"]])

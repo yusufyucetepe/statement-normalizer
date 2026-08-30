@@ -77,7 +77,7 @@ migrations, real JSONB, and real `NUMERIC`, and still leave no residue.
 | Method | Path                 | Notes |
 |--------|----------------------|-------|
 | `POST` | `/statements/upload` | Multipart upload of a CSV or PDF. Detects, parses, validates and stores. **201** with the statement summary and a `Location` header; **409** if these exact bytes were uploaded before; **422** if no parser recognizes the file or a claimed file is malformed. |
-| `GET`  | `/transactions`      | Filters: `date_from`, `date_to`, `direction` (`credit`/`debit`), `institution`, `statement_id`, `limit`, `offset`. |
+| `GET`  | `/transactions`      | Filters: `date_from`, `date_to`, `direction` (`credit`/`debit`), `institution`, `statement_id`, `limit`, `offset`. Returns `{items, total, limit, offset}`. |
 | `GET`  | `/parsers`           | The live adapters, in the order detection considers them. |
 | `GET`  | `/health`            | Liveness. |
 
@@ -95,6 +95,21 @@ curl "http://localhost:8000/transactions?statement_id=e86a38b2-..."
 The upload response deliberately does **not** inline the transactions — a
 statement can carry thousands of rows. It returns the summary and points at the
 paginated `/transactions` endpoint instead.
+
+`/transactions` answers with an envelope rather than a bare array, because
+`limit`/`offset` without a total is a half-answer: a client that receives a full
+page cannot tell a last page from a middle one, and has to spend another request
+finding out. `total` is the number of rows matching the filters *before*
+`limit`/`offset`, so it is what a "showing 20 of 413" line needs.
+
+```json
+{ "items": [ ... ], "total": 413, "limit": 100, "offset": 0 }
+```
+
+It costs a second `COUNT` query per request. The alternative — `count(*) OVER ()`
+carried on each row — is one round trip, but returns nothing at all when the
+offset lands past the end, which is precisely the request that needs the total
+most.
 
 It carries two counts: `transaction_count` is how many rows were in the file,
 and `new_transaction_count` is how many of those were not already stored by an
@@ -417,5 +432,7 @@ debit column from a credit one.
 - **Rows stored before migration `0003` have a NULL `dedupe_key`** and never
   match later uploads. Backfilling would have meant reimplementing the
   fingerprint in SQL; re-uploading those statements is the intended fix.
-- **No pagination metadata.** `/transactions` takes `limit`/`offset` but returns
-  a bare array with no total count.
+- **Pagination is offset-based.** Fine at this size, but a deep `offset` makes
+  Postgres walk everything it skips, and `total` is a full `COUNT` on every
+  request. A keyset cursor over `(date, id)` is the fix when a table gets large
+  enough to feel it.
