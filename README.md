@@ -312,6 +312,28 @@ tolerates extras. `product` + `started_date` + `completed_date` + `state`
 together are distinctive enough that no other institution collides, so detection
 stays unambiguous at equal priority.
 
+That rule has one hole, and checking the adapter against Revolut's published
+format is what found it. Revolut's **crypto/trading export is this same header
+plus four columns**:
+
+```
+Type,Product,Started Date,Completed Date,Description,Amount,Currency,
+Fiat amount,Fiat amount (inc. fees),Fee,Base currency,State,Balance
+```
+
+A subset rule claims it — and its `Amount`, `Currency` and `Balance` describe the
+*asset*, not money: `100.0000`, `EOS`. The money is in `Fiat amount`. Parsed as a
+fiat statement it stored `100 EOS` as a credit of 100, a fee denominated in `SEK`
+as `EOS`, and filed all of it under `revolut|Current` — the same account scope as
+the real fiat export. Nothing downstream would have caught it, because `EOS` is
+three uppercase letters and passes currency validation.
+
+So `TRADING_COLUMNS` names the two columns (`Fiat amount`, `Base currency`) that
+mark that file, and the adapter declines it. A subset rule tolerates a superset
+that means *more*; it cannot, on its own, recognize one that means something
+*different*. The file now 422s as unrecognized, which is the correct answer until
+an adapter exists that models asset quantities.
+
 One consequence worth knowing: because fees expand into extra rows,
 `transaction_count` counts transactions produced, not lines in the file.
 
@@ -405,10 +427,14 @@ debit column from a credit one.
 
 - **Only one real institution.** `revolut` is the only adapter for a format we
   did not invent; `dummy_bank` remains as the reference implementation.
-- **Revolut's header is reconstructed from its published format, not from a real
-  export.** If the live column names differ, `can_parse` returns False and the
-  upload 422s — loud rather than corrupting, and a one-line fix, but it is the
-  first thing to check against a real download.
+- **Revolut's header is confirmed against its published format, not against a
+  real download.** The ten column names and the `%Y-%m-%d %H:%M:%S` timestamps
+  are corroborated by independent third-party importers, but no export from an
+  actual account has been through this parser.
+- **Revolut's crypto/trading export is rejected, not parsed.** It is recognized
+  well enough to be declined (see above) rather than misread, but a user who
+  uploads one gets a generic "no parser recognized this file" rather than an
+  explanation. Modelling asset quantities is its own piece of work.
 - **`revolut` uses `Product` as its account reference.** The export carries no
   IBAN or account number, so `Current` is the closest thing to an account scope.
   Returning nothing instead would leave `dedupe_key` NULL and let every

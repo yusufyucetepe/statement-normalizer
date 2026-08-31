@@ -44,6 +44,13 @@ class RevolutCsvParser(StatementParser):
             "balance",
         }
     )
+    #: Columns that appear only in Revolut's crypto/trading export. That file
+    #: carries every column this adapter requires, so a subset match claims it —
+    #: but its `Amount`, `Currency` and `Balance` are denominated in the asset
+    #: (`100.0000`, `EOS`), and the money value lives in `Fiat amount`. Parsing
+    #: it here would file crypto quantities as fiat, and nothing downstream would
+    #: catch it: `EOS` is three uppercase letters and passes currency validation.
+    TRADING_COLUMNS: ClassVar[frozenset[str]] = frozenset({"fiat_amount", "base_currency"})
     DATETIME_FORMAT: ClassVar[str] = "%Y-%m-%d %H:%M:%S"
     #: The one state in which money actually moved. See `_to_transactions`.
     SETTLED: ClassVar[str] = "COMPLETED"
@@ -56,6 +63,11 @@ class RevolutCsvParser(StatementParser):
         must not turn every upload into a 422. The combination of `product`,
         `started_date`, `completed_date` and `state` is distinctive enough that
         no other institution collides, so detection stays unambiguous.
+
+        The exception is a superset that means something *different* rather than
+        more: Revolut's crypto/trading export is this layout plus four columns,
+        and claiming it would store asset quantities as money. A subset rule
+        cannot tell that apart on its own, so it is named.
         """
         if file.format is not StatementFormat.CSV:
             return False
@@ -63,6 +75,8 @@ class RevolutCsvParser(StatementParser):
         if not head:
             return False
         header = {normalize_header(column) for column in next(csv.reader(head))}
+        if header & self.TRADING_COLUMNS:
+            return False
         return header >= self.REQUIRED_COLUMNS
 
     def parse(self, file: StatementFile) -> list[Transaction]:

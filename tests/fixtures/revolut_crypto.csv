@@ -1,0 +1,3 @@
+Type,Product,Started Date,Completed Date,Description,Amount,Currency,Fiat amount,Fiat amount (inc. fees),Fee,Base currency,State,Balance
+EXCHANGE,Current,2026-02-02 10:00:00,2026-02-02 10:00:00,Exchanged to EOS,100.0000,EOS,600.00,609.15,9.15,SEK,COMPLETED,100.0000
+EXCHANGE,Current,2026-02-03 10:00:00,2026-02-03 10:00:00,Exchanged to SEK,-30.0000,EOS,-400.00,-394.86,5.14,SEK,COMPLETED,70.0000

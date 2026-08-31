@@ -209,9 +209,47 @@ one.
   `#/components/schemas/TransactionPage`.
 - `ruff check` / `ruff format --check` clean.
 
+## Milestone 7 — verify the Revolut format against the published spec (done)
+
+The header was reconstructed from memory and flagged as the top risk in the
+project: a mismatch means every Revolut upload 422s. Checked it against
+Revolut's published format and three independent third-party importers.
+
+**The header is correct.** All ten column names match exactly, in order, and the
+`%Y-%m-%d %H:%M:%S` timestamp format is confirmed by real sample data. Nothing to
+change there.
+
+**The check found a different bug, and a worse one.** Revolut's crypto/trading
+export uses the same header *plus* four columns (`Fiat amount`, `Fiat amount
+(inc. fees)`, `Base currency`, and an extra ordering). Our detection is a
+required-subset match, so it claimed that file — and its `Amount`, `Currency` and
+`Balance` are the *asset* (`100.0000`, `EOS`), with the money in `Fiat amount`.
+Demonstrated against the pre-fix code: `100 EOS` stored as a credit of 100, a fee
+denominated in SEK stored as EOS, all under `revolut|Current` — the same account
+scope as the real fiat export. `EOS` is three uppercase letters, so currency
+validation passed and nothing downstream would ever have flagged it.
+
+- [x] Header, column order and datetime format verified against published format
+      + `tariochbctools`, `ofxstatement-revolut`, `revolutax`
+- [x] `TRADING_COLUMNS` names the columns that mark the crypto export; detection
+      declines a header containing them
+- [x] `tests/fixtures/revolut_crypto.csv` — the real trading header, synthetic rows
+- [x] 2 tests: the adapter declines it *and* the file genuinely contains every
+      required column (so the rejection is from what it adds, not what it lacks);
+      the registry claims it for nobody
+- [x] README: the hole in subset detection, and what it stored before the fix
+
+### Verification performed
+
+- `uv run pytest` with no `TEST_DATABASE_URL` → **49 passed, 18 skipped**.
+- `TEST_DATABASE_URL=… uv run pytest` → **67 passed** against real Postgres 16.
+- Pre-fix behaviour reproduced directly by clearing `TRADING_COLUMNS`: detection
+  returns True and four bogus transactions come out. With the fix, False.
+- `ruff check` / `ruff format --check` clean.
+
 ## Next
 
-- [ ] Check the Revolut header against a real export — it is reconstructed from
+- [ ] Check the Revolut adapter against a real export — it is reconstructed from
       the published format, and a mismatch means every upload 422s.
 - [ ] A real institution's PDF. `dummy_pdf` is built against a fixture we
       generate, so its layout assumptions (a header row, one line per

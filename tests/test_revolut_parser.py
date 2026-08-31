@@ -32,6 +32,21 @@ def test_can_parse_tolerates_a_column_being_added(statement_file):
     assert len(parser.parse(file)) == 8
 
 
+def test_can_parse_rejects_the_crypto_export_that_contains_the_same_columns(statement_file):
+    """Revolut's crypto/trading export is this header plus four columns, so a
+    plain subset match claims it — and its `Amount` and `Balance` are asset
+    quantities, its `Currency` a ticker. `EOS` passes currency validation, so
+    parsing it would file 100 EOS as 100 units of money and nothing would flag
+    it. A 422 is the right answer; a wrong number is not."""
+    file = statement_file("revolut_crypto.csv")
+
+    assert parser.can_parse(file) is False
+    # The columns it shares are genuinely all of ours: the rejection has to come
+    # from what the file adds, not from something it is missing.
+    header = {c.strip().lower().replace(" ", "_") for c in file.text.splitlines()[0].split(",")}
+    assert header >= parser.REQUIRED_COLUMNS
+
+
 def test_only_completed_rows_become_transactions(statement_file):
     descriptions = [t.description for t in parser.parse(statement_file(FIXTURE))]
 

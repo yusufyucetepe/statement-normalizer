@@ -114,3 +114,9 @@ def test_a_pdf_and_a_csv_from_one_institution_route_to_different_adapters(statem
 
     assert csv_parser.institution == pdf_parser.institution == "dummy_bank"
     assert type(csv_parser) is not type(pdf_parser)
+
+
+def test_the_revolut_crypto_export_is_claimed_by_nobody(statement_file):
+    """Better unrecognized than misread: no adapter models asset quantities."""
+    with pytest.raises(NoMatchingParser):
+        registry.detect(statement_file("revolut_crypto.csv"))

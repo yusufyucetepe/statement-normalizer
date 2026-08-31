@@ -107,3 +107,22 @@ loudly — it quietly pushes the next feature into a worse shape.
 whether the rejected case can actually cause the harm the rule exists to
 prevent. Key the rule on the full identity that matters — here (institution,
 format) — rather than on the convenient prefix of it.
+
+## A subset match cannot tell "more" from "different"
+
+`RevolutCsvParser` detects on a required *subset* of the header, so an added
+column does not break the upload. That reasoning is still right, but it has a
+blind spot I did not see when I wrote it: a file can contain every column I
+require and still be a different document. Revolut's crypto export is the fiat
+header plus four columns, and it was claimed and silently misparsed — asset
+quantities stored as money, under the same account scope as the real statement.
+
+**Why:** "tolerate additions" and "recognize this document" are two different
+questions. A subset rule answers the first and is silently assumed to answer the
+second.
+
+**How to apply:** when detection is a subset match, ask what *else* is a superset
+of it — especially other exports from the same institution. If one exists, name
+the columns that distinguish it and decline explicitly. And when a check confirms
+the thing I was worried about, keep looking: the risk I wrote down was the header
+being wrong, and the real bug was next to it.
