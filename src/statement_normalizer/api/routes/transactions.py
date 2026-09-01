@@ -3,10 +3,11 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from statement_normalizer.api.deps import SessionDep
+from statement_normalizer.api.paging import count_matching
 from statement_normalizer.models.schemas import Direction, TransactionPage
 from statement_normalizer.models.tables import StatementTransaction as LinkRow
 from statement_normalizer.models.tables import Transaction as TransactionRow
@@ -63,11 +64,7 @@ def list_transactions(
             TransactionRow.date.desc(), TransactionRow.created_at, TransactionRow.id
         )
 
-    # A second query rather than `count(*) OVER ()` alongside the rows: a window
-    # function returns the total on each row, so an offset past the end returns
-    # no rows and therefore no total — exactly the request that most needs one.
-    total = session.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
-
+    total = count_matching(session, stmt)
     rows = session.scalars(
         stmt.options(selectinload(TransactionRow.statements)).limit(limit).offset(offset)
     )

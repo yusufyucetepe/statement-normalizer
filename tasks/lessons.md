@@ -126,3 +126,21 @@ of it — especially other exports from the same institution. If one exists, nam
 the columns that distinguish it and decline explicitly. And when a check confirms
 the thing I was worried about, keep looking: the risk I wrote down was the header
 being wrong, and the real bug was next to it.
+
+## `now()` is the transaction timestamp, so a rollback-per-test harness ties every row
+
+A test asserting "most recent first" failed even though the ORDER BY was right.
+`uploaded_at` defaults to Postgres' `now()`, which is fixed for the whole
+transaction — and the DB fixtures run each test inside one transaction that is
+rolled back. Three uploads, one timestamp, order decided by the random-UUID
+tiebreaker.
+
+**Why:** the harness that makes DB tests cheap also collapses a distinction the
+production code depends on. A timestamp default is not a per-row clock reading,
+and any test whose subject is *ordering by time* has to set the times itself
+rather than trust the fixture to produce them.
+
+**How to apply:** when a time-ordered assertion fails, check whether the rows
+actually have different times before touching the query. And when a test depends
+on a value the harness supplies rather than the code under test, set the value
+explicitly — the assertion should fail for the reason it names.

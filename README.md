@@ -78,6 +78,8 @@ migrations, real JSONB, and real `NUMERIC`, and still leave no residue.
 |--------|----------------------|-------|
 | `POST` | `/statements/upload` | Multipart upload of a CSV or PDF. Detects, parses, validates and stores. **201** with the statement summary and a `Location` header; **409** if these exact bytes were uploaded before; **422** if no parser recognizes the file or a claimed file is malformed. |
 | `GET`  | `/transactions`      | Filters: `date_from`, `date_to`, `direction` (`credit`/`debit`), `institution`, `statement_id`, `limit`, `offset`. Returns `{items, total, limit, offset}`. |
+| `GET`  | `/statements`        | Uploaded statements, most recent first. Filters: `institution`, `limit`, `offset`. Same envelope. |
+| `GET`  | `/statements/{id}`   | One statement. **404** if no statement has that id. |
 | `GET`  | `/parsers`           | The live adapters, in the order detection considers them. |
 | `GET`  | `/health`            | Liveness. |
 
@@ -96,7 +98,7 @@ The upload response deliberately does **not** inline the transactions — a
 statement can carry thousands of rows. It returns the summary and points at the
 paginated `/transactions` endpoint instead.
 
-`/transactions` answers with an envelope rather than a bare array, because
+Both list endpoints answer with an envelope rather than a bare array, because
 `limit`/`offset` without a total is a half-answer: a client that receives a full
 page cannot tell a last page from a middle one, and has to spend another request
 finding out. `total` is the number of rows matching the filters *before*
@@ -114,6 +116,29 @@ most.
 It carries two counts: `transaction_count` is how many rows were in the file,
 and `new_transaction_count` is how many of those were not already stored by an
 earlier statement. They differ when statement periods overlap — see below.
+
+### Finding a statement again
+
+`GET /statements` exists because an upload response is otherwise the only place
+a statement id ever appears. Without it, a client that dropped the id had one way
+back: re-upload the same bytes and read the id off the `409`. It is also the only
+way to see `new_transaction_count` after the upload that produced it — the number
+that says an overlapping re-download contributed almost nothing.
+
+```bash
+curl "http://localhost:8000/statements?institution=revolut"
+curl "http://localhost:8000/statements/e86a38b2-..."
+```
+
+An unknown id is a `404` here, while `GET /transactions?statement_id=<unknown>`
+is an empty page. The difference is deliberate: there, an id that matches nothing
+is a filter that excluded everything; here it is a request for a thing that does
+not exist.
+
+Ordering is `uploaded_at` descending with `id` as a tiebreaker. The tiebreaker is
+not decoration: `uploaded_at` defaults to Postgres' `now()`, which is the
+*transaction* timestamp, so any two statements written in the same transaction
+share it exactly and would otherwise page unstably.
 
 ### Re-uploading the same file
 
@@ -458,6 +483,10 @@ debit column from a credit one.
 - **Rows stored before migration `0003` have a NULL `dedupe_key`** and never
   match later uploads. Backfilling would have meant reimplementing the
   fingerprint in SQL; re-uploading those statements is the intended fix.
+- **A statement cannot be deleted.** Uploading the wrong file is permanent
+  short of touching the database. The semantics are the interesting part rather
+  than the SQL: transactions are shared between overlapping statements, so a
+  delete has to drop only the rows no surviving statement still references.
 - **Pagination is offset-based.** Fine at this size, but a deep `offset` makes
   Postgres walk everything it skips, and `total` is a full `COUNT` on every
   request. A keyset cursor over `(date, id)` is the fix when a table gets large

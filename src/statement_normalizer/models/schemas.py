@@ -100,17 +100,29 @@ class StatementRead(BaseModel):
     uploaded_at: datetime
 
 
-class TransactionPage(BaseModel):
-    """One page of `GET /transactions`, with the size of the full result set.
+class Page[ItemT](BaseModel):
+    """One page of a list endpoint, with the size of the full result set.
 
     An envelope rather than a bare array because `limit`/`offset` are useless
     without knowing when to stop: a client receiving a full page cannot tell a
     last page from a middle one, and asking for one more page to find out is a
     request that exists only because the response withheld a number the query
     already had to compute.
+
+    Generic so the two list endpoints cannot drift into two different envelopes;
+    each is subclassed under its own name so OpenAPI keeps calling it
+    `TransactionPage` rather than `Page_TransactionRead_`.
     """
 
-    items: list[TransactionRead]
+    items: list[ItemT]
     total: int = Field(description="Rows matching the filters, ignoring limit/offset.")
     limit: int
     offset: int
+
+
+class TransactionPage(Page[TransactionRead]):
+    """One page of `GET /transactions`."""
+
+
+class StatementPage(Page[StatementRead]):
+    """One page of `GET /statements`."""

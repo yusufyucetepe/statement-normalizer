@@ -247,10 +247,61 @@ validation passed and nothing downstream would ever have flagged it.
   returns True and four bogus transactions come out. With the fix, False.
 - `ruff check` / `ruff format --check` clean.
 
+## Milestone 8 — reading statements back (done)
+
+Uploaded statements were write-only. `POST /statements/upload` returns an id and
+nothing in the API could retrieve it afterwards: a client that dropped the id had
+exactly one way back, re-uploading the same bytes to read it off the 409. The
+milestone-3 headline number, `new_transaction_count`, was visible for one
+response and then unreachable.
+
+Decisions: a generic `Page[ItemT]` subclassed per endpoint, so the two list
+endpoints cannot drift into two different envelopes while OpenAPI keeps calling
+them `TransactionPage` and `StatementPage`; the `count(*)`-vs-window reasoning
+moved into one `count_matching` helper rather than being copied; `404` for an
+unknown statement id even though `GET /transactions?statement_id=` returns an
+empty page for the same id (a filter matching nothing is not a missing thing);
+`institution` is the only filter — `format` is in the response and is not a real
+access path.
+
+- [x] `models/schemas.py`: generic `Page[ItemT]`, `TransactionPage`, `StatementPage`
+- [x] `api/paging.py`: `count_matching`, used by both list endpoints
+- [x] `GET /statements` — newest first, `institution` / `limit` / `offset`
+- [x] `GET /statements/{statement_id}` — 404 when unknown
+- [x] 9 tests in `tests/test_statements_api.py`
+- [x] README: both endpoints, why 404 vs empty page, why the `id` tiebreaker;
+      Known gaps gains "a statement cannot be deleted"
+- [x] No migration — nothing about the schema changed, and `alembic check` agrees
+
+### Verification performed
+
+- `uv run pytest` with no `TEST_DATABASE_URL` → 49 passed, 27 skipped.
+- `TEST_DATABASE_URL=... uv run pytest` → **76 passed** against real Postgres 16.
+- `alembic check` → "No new upgrade operations detected".
+- HTTP end to end: three uploads listed newest first with distinct
+  `uploaded_at`; `?institution=` → totals 2 and 1; `?offset=100` → `[]` with
+  `total: 3`; detail by id → 200 and `new_transaction_count: 2` on the overlap
+  statement, matching its upload response; unknown id → 404; non-UUID → 422.
+- OpenAPI: schema names are `StatementPage` / `TransactionPage` — the generic did
+  not leak `Page_TransactionRead_`, so milestone 6's schema name is unchanged.
+- `ruff check` / `ruff format --check` clean.
+
+### The test that failed first
+
+`test_statements_are_listed_most_recent_first` failed against real Postgres, and
+the cause was not the ordering. `uploaded_at` defaults to `now()`, which is the
+*transaction* timestamp, and the test harness runs every upload inside one
+rolled-back transaction — so all three rows shared a timestamp and fell through
+to the `id` tiebreaker. Production never produces that tie (one upload is one
+transaction, confirmed by the distinct times over HTTP above), so the test now
+stamps distinct times rather than trusting the fixture, and the tie the harness
+does produce is what `test_paging_visits_every_statement_exactly_once` exercises.
+
 ## Next
 
-- [ ] Check the Revolut adapter against a real export — it is reconstructed from
-      the published format, and a mismatch means every upload 422s.
+- [ ] Check the Revolut adapter against a real export — the header is confirmed
+      against the published format and third-party importers, but no download
+      from an actual account has been through it.
 - [ ] A real institution's PDF. `dummy_pdf` is built against a fixture we
       generate, so its layout assumptions (a header row, one line per
       transaction plus wraps) have not met a real statement.

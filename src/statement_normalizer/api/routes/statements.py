@@ -1,15 +1,16 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from statement_normalizer.api.deps import RegistryDep, SessionDep
+from statement_normalizer.api.paging import count_matching
 from statement_normalizer.config import get_settings
 from statement_normalizer.models.identity import assign_dedupe_keys
-from statement_normalizer.models.schemas import StatementRead
+from statement_normalizer.models.schemas import StatementPage, StatementRead
 from statement_normalizer.models.tables import Statement as StatementRow
 from statement_normalizer.models.tables import StatementTransaction as LinkRow
 from statement_normalizer.models.tables import Transaction as TransactionRow
@@ -82,6 +83,49 @@ def upload_statement(
 
     statement = _persist(session, statement_file, result)
     response.headers["Location"] = _location(statement.id)
+    return statement
+
+
+@router.get("", response_model=StatementPage)
+def list_statements(
+    session: SessionDep,
+    institution: Annotated[str | None, Query(description="Source institution.")] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> StatementPage:
+    """List uploaded statements, most recently uploaded first.
+
+    The upload response is otherwise the only place a statement id ever appears,
+    so this is how a client recovers one it did not keep — and the only way to
+    read `new_transaction_count` after the upload that produced it.
+    """
+    stmt = select(StatementRow)
+    if institution:
+        stmt = stmt.where(StatementRow.source_institution == institution)
+    # `id` breaks ties: `uploaded_at` is a clock reading, and two uploads landing
+    # in the same tick would otherwise page unstably.
+    stmt = stmt.order_by(StatementRow.uploaded_at.desc(), StatementRow.id)
+
+    total = count_matching(session, stmt)
+    rows = session.scalars(stmt.limit(limit).offset(offset))
+    return StatementPage(items=list(rows), total=total, limit=limit, offset=offset)
+
+
+@router.get(
+    "/{statement_id}",
+    response_model=StatementRead,
+    responses={404: {"description": "No statement with this id."}},
+)
+def get_statement(session: SessionDep, statement_id: uuid.UUID) -> StatementRow:
+    """One uploaded statement by id, or 404.
+
+    404 rather than the empty page `GET /transactions?statement_id=` returns for
+    an unknown id: there, an id that matches nothing is a filter that excluded
+    everything; here it is a request for a thing that does not exist.
+    """
+    statement = session.get(StatementRow, statement_id)
+    if statement is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no statement with id {statement_id}")
     return statement
 
 
