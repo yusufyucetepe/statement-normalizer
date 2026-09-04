@@ -85,6 +85,17 @@ def test_the_payment_reference_joins_the_description(statement_file):
     assert transactions[0].description == "Topped up balance"  # no reference, no parentheses
 
 
+def test_the_transaction_id_is_carried_through(statement_file):
+    """Wise is the reason `external_id` exists: it publishes an id, so identity
+    can stop leaning on the description. The id is a transaction *group* though —
+    the transfer and the fee charged for it share one."""
+    transactions = parser.parse(statement_file("wise_statement.csv"))
+
+    assert transactions[0].external_id == "TRANSFER-9001"
+    assert transactions[2].external_id == transactions[3].external_id == "TRANSFER-9003"
+    assert transactions[2].amount != transactions[3].amount
+
+
 def test_the_balance_is_carried_and_the_raw_row_kept(statement_file):
     transactions = parser.parse(statement_file("wise_statement.csv"))
 

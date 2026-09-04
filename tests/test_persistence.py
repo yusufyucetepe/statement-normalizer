@@ -202,6 +202,33 @@ def test_a_second_institution_deduplicates_and_stays_out_of_the_first(upload, cl
     assert client.get("/transactions?institution=revolut").json()["total"] == 8
 
 
+def test_a_reworded_export_is_recognized_by_the_institutions_own_id(upload, client, count_rows):
+    """The bug external ids exist to fix, end to end.
+
+    `wise_redescribed.csv` is the same six transactions with every description
+    reworded — the kind of drift an institution introduces on its own schedule.
+    Fingerprinted on the description, all six look new and the account silently
+    doubles. Fingerprinted on `TransferWise ID`, none of them do.
+    """
+    first = upload("wise_statement.csv").json()
+    reworded = upload("wise_redescribed.csv").json()
+
+    assert (reworded["transaction_count"], reworded["new_transaction_count"]) == (6, 0)
+    assert count_rows("transactions") == 6
+    assert count_rows("statement_transactions") == 12  # both files report all six
+
+    # Not a coincidence of matching text: the descriptions really did all change.
+    stored = client.get("/transactions?limit=100").json()["items"]
+    descriptions = {row["description"] for row in stored}
+    assert "Top up from linked bank account" not in descriptions
+    assert descriptions >= {"Topped up balance", "Sent money to Jane Doe (Rent February)"}
+    assert all(row["external_id"] for row in stored)
+
+    for statement in (first, reworded):
+        page = client.get("/transactions", params={"statement_id": statement["id"]}).json()
+        assert page["total"] == 6
+
+
 def test_the_same_transaction_in_two_formats_is_stored_once(upload, client, count_rows):
     """Identity is a property of the transaction, not of the file it arrived in.
 

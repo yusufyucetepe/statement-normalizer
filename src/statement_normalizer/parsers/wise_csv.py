@@ -139,6 +139,10 @@ class WiseCsvParser(StatementParser):
                 direction=Direction.DEBIT if amount < 0 else Direction.CREDIT,
                 balance_after=self._money(row, "running_balance", row_number),
                 raw_row=dict(row),
+                # Not unique per row: a transfer and the fee charged for it carry
+                # the same id. Identity keeps date, amount and currency alongside
+                # it for exactly that reason — see `models/identity.py`.
+                external_id=row["transferwise_id"],
                 source_institution=self.institution,
             )
         except ValueError as exc:  # pydantic ValidationError subclasses ValueError

@@ -166,3 +166,20 @@ chains against the amounts settles a fee question in one arithmetic check, which
 is a reason to want a balance column in a fixture even when nothing reads it.
 And when a real export is available, read the *rows*, not just the header — the
 header would not have shown either of this milestone's two findings.
+
+## A hash that is already in the database is a schema, not an implementation detail
+
+Changing how `dedupe_key` is built looks like editing one small function. It is
+not: every key already stored was built by that function, and altering the
+payload by a separator invalidates all of them at once. Nothing raises. The only
+symptom is that overlapping uploads quietly start double-counting again.
+
+**Why:** a stored hash has the same contract obligations as a column, but none of
+the visible machinery — no migration, no type error, no failing query — so the
+usual signals that say "this is a breaking change" are all absent.
+
+**How to apply:** when a new input has to reach a stored fingerprint, add a
+*second* payload shape marked distinctly rather than editing the existing one,
+and pin the old shape to a literal digest in a test that says what breaking it
+costs. Prove the old digest is unchanged against the previous commit rather than
+assuming a careful edit was careful enough — `git stash` and compute both.

@@ -232,6 +232,45 @@ Statements with no `account_ref` get a NULL `dedupe_key` and are never
 deduplicated: without an account, two people's identical £4.35 coffee at the
 same bank would collapse into one row.
 
+### When the institution publishes its own id
+
+The description is the weakest thing in that fingerprint. It is the part of a row
+an institution feels free to reword between exports, and a reworded row
+fingerprints differently — so it is stored a second time, and the account
+silently doubles. That is the same double-count overlapping statements cause,
+arriving by a different route.
+
+Some institutions publish an id for the transaction. When one does, the adapter
+passes it as `external_id` and the fingerprint uses **it in place of the
+description**:
+
+```
+v1 | institution | account | date | direction | amount | currency | description
+v2 | institution | account | date | direction | amount | currency | external_id
+```
+
+Rewording is then free. On a Wise export whose six descriptions were all
+rewritten, the re-upload stores 6 of 6 rows again when keyed on the description
+and 0 of 6 when keyed on the id.
+
+Two properties of that layout are load-bearing:
+
+**The id replaces the description, not the rest of the key.** An institution's id
+is not necessarily unique per row — Wise gives a transfer and the fee charged for
+it the same `TransferWise ID` — so date, amount and currency stay in the payload.
+Keying on the id alone would merge the fee into its transfer and lose it.
+
+**The marker is hashed in as the first element**, so the two shapes are different
+payloads rather than two spellings of one. A `v1` key and a `v2` key can never
+collide, and a description that happens to read like an id cannot fingerprint as
+one. `v1` and `v2` are not a version sequence to migrate between: both are live
+at once, chosen per transaction.
+
+`v1` is frozen. Every `dedupe_key` in the database was built with it, and
+changing that payload by so much as a separator invalidates all of them — with no
+error, just totals that quietly stop matching. `test_identity.py` pins it to a
+literal digest so that change cannot be made by accident.
+
 ---
 
 ## The normalized schema
@@ -559,18 +598,20 @@ debit column from a credit one.
 - **PDF column geometry comes from a header row.** A statement whose table has
   no `Date`/`Description`/`Debit`/`Credit`/`Balance` header — or which splits a
   transaction across a page break — is not handled.
-- **Transaction identity leans on the description.** A bank that appends a
-  changing reference to the narrative between exports, or varies its casing
-  beyond what normalization catches, produces a different `dedupe_key` for the
-  same transaction — and it gets stored twice. This is the part most likely to
-  need revisiting against a real export. `raw_row` is retained and the
-  fingerprint is versioned (`v1`), so historical rows can be re-keyed.
+- **Identity still leans on the description wherever there is no id to use.**
+  `wise` publishes one; `revolut` and `dummy_bank` do not, so for those a bank
+  that reworded its narrative between exports still stores the transaction
+  twice. `raw_row` is retained, so historical rows can be re-keyed.
 - **Dedupe is global, not per institution.** The unique index on
   `content_sha256` is on the hash alone, so two institutions emitting a
   byte-identical file would collide. Vanishingly unlikely with real exports.
 - **Rows stored before migration `0003` have a NULL `dedupe_key`** and never
   match later uploads. Backfilling would have meant reimplementing the
   fingerprint in SQL; re-uploading those statements is the intended fix.
+- **Rows stored before migration `0004` are keyed on their description**, and a
+  re-upload of the same statement now keys on the id and stores them a second
+  time. The id exists only in the source file, so no backfill is possible;
+  re-uploading is again the fix, and it is a one-time cost per statement.
 - **A delete is not audited and cannot be undone from inside the service.** The
   rows are gone, not tombstoned. Re-uploading the file restores its transactions,
   but the statement gets a new id, and any row it had shared with a statement

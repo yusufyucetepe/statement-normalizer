@@ -40,7 +40,26 @@ class Transaction(BaseModel):
         default_factory=dict,
         description="Verbatim source record, kept for audit and re-parsing.",
     )
+    external_id: str | None = Field(
+        default=None,
+        max_length=128,
+        description="The institution's own id for this transaction, when it publishes one. "
+        "Used for identity in place of the description — see `models/identity.py`.",
+    )
     source_institution: str = Field(min_length=1, max_length=64)
+
+    @field_validator("external_id", mode="before")
+    @classmethod
+    def _blank_id_is_no_id(cls, value: Any) -> Any:
+        """An empty cell is the absence of an id, not an id that is the empty string.
+
+        Storing `""` would put a row in the "has an identifier" branch of the
+        fingerprint with nothing to identify it, and every such row at an
+        institution would then look like the same transaction.
+        """
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
     @field_validator("currency", mode="before")
     @classmethod

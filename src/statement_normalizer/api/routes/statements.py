@@ -272,6 +272,7 @@ def _insert_transactions(
                     "direction": txn.direction,
                     "balance_after": txn.balance_after,
                     "raw_row": txn.raw_row,
+                    "external_id": txn.external_id,
                     "source_institution": txn.source_institution,
                 }
                 for transaction_id, key, txn in zip(ids, keys, result.transactions, strict=True)

@@ -411,13 +411,53 @@ transferwise`, `jlabath/wiseconvert` (`%d-%m-%Y`), `BananaAccounting/Universal`,
 committed exports (`kedder/ofxstatement-transferwise` sample, `uabean` fixtures)
 where `787.62 - 11.35 = 776.27` settles it.
 
-## Next
+## Milestone 11 — identity on the institution's own id (done)
 
-- [ ] Use an institution's own transaction id in `dedupe_key` when it publishes
-      one, so identity stops leaning on the description. **Constraint found in
-      milestone 10:** Wise's id is not row-unique — a transfer and its charge row
-      share it — so the id must join the fingerprint (replacing the description),
-      never replace the whole key.
+Closes the risk the README had called "the part most likely to need revisiting":
+the fingerprint's weakest element was the description, which is the part of a row
+an institution feels free to reword between exports. A reworded row fingerprints
+differently and is stored again — the same double-count `0003` exists to prevent,
+arriving by a different route.
+
+Adapters whose export publishes an id now pass `external_id`, and the fingerprint
+uses it *in place of the description* for those rows.
+
+Decisions: the id replaces the description but **not** the rest of the payload,
+because an institution's id is not row-unique (milestone 10's finding: Wise gives
+a transfer and its fee the same one, and keying on the id alone would merge them);
+the shape marker (`v1`/`v2`) is hashed in as the first element, so the two are
+different payloads rather than two spellings of one and can never collide; `v1`
+is frozen and pinned to a literal digest in the tests; a blank id column is
+normalized to `None` rather than becoming an id that is the empty string; an
+external id does **not** lift the `account_ref` requirement, since institutions
+promise ids are unique within an account, not across every account they hold.
+
+- [x] `Transaction.external_id`, with a validator making a blank cell no id
+- [x] `identity._fingerprint` branches on it; `v1` payloads byte-identical
+- [x] Migration `0004`: nullable `transactions.external_id`, no backfill possible
+- [x] `wise` passes `transferwise_id`; the upload path persists the column
+- [x] `wise_redescribed.csv` — the same six transactions, every description
+      reworded — plus 6 identity tests, 1 parser test, 1 persistence test
+- [x] README: "When the institution publishes its own id", refreshed Known gaps
+
+### Verification performed
+
+- `uv run pytest` with no `TEST_DATABASE_URL` → 69 passed, 35 skipped.
+- `TEST_DATABASE_URL=... uv run pytest` → **104 passed** against real Postgres 16.
+- `alembic check` → "No new upgrade operations detected"; `downgrade base` then
+  `upgrade head` round trips clean.
+- **`v1` keys proven unchanged**, three ways: the digest from the committed
+  pre-change code, the digest from the new code, and a sha256 of the payload
+  written out by hand all equal
+  `6d76b2f1…e359c91`. That constant is now pinned by `test_identity.py`.
+- The payoff, measured: re-uploading the reworded export stores **6 of 6** rows
+  again when keyed on the description, **0 of 6** when keyed on the id.
+- HTTP end to end: `wise_redescribed.csv` → `transaction_count 6`,
+  `new_transaction_count 0`, all six rows linked to both statements; Revolut
+  unaffected, `external_id: null`, still 8 rows.
+- `ruff check` / `ruff format --check` clean.
+
+## Next
 - [ ] Check the Revolut adapter against a real export — the header is confirmed
       against the published format and third-party importers, but no download
       from an actual account has been through it.

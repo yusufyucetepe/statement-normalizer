@@ -6,9 +6,18 @@ from collections.abc import Iterable
 
 from statement_normalizer.models.schemas import Transaction
 
-#: Bumped when the fingerprint payload changes. It is hashed *into* the key, so
-#: keys from two versions can never collide or silently compare equal.
-FINGERPRINT_VERSION = "v1"
+#: Which payload shape produced a key. Hashed in as the *first* element, so a key
+#: built from a description can never collide with one built from an external id,
+#: and the two are never silently compared as equal.
+#:
+#: These are not a version sequence to migrate between: both shapes are live at
+#: once, chosen per transaction by whether the institution published an id.
+#: `v1` is frozen — every `dedupe_key` already in the database was built with it,
+#: and changing its payload by so much as a separator silently invalidates all of
+#: them, after which overlapping uploads double-count until every statement is
+#: re-uploaded. `test_identity.py` pins it to a literal digest for that reason.
+DESCRIPTION_FINGERPRINT = "v1"
+EXTERNAL_ID_FINGERPRINT = "v2"
 
 _SEPARATOR = "|"
 
@@ -16,13 +25,30 @@ _SEPARATOR = "|"
 def _fingerprint(txn: Transaction, account_ref: str) -> str:
     """The parts of a transaction that identify it across two exports.
 
+    The last element is what the institution gives us to recognize the
+    transaction by. When it publishes its own id we use that and drop the
+    description entirely: a narrative is the part of a row an institution feels
+    free to reword between exports, and a reworded row is stored twice today.
+
+    The id replaces the description rather than joining it, but it does *not*
+    replace the rest — date, direction, amount and currency stay in the payload.
+    That is deliberate and load-bearing: an institution's id need not be unique
+    per row. Wise gives a transfer and the fee charged for it the same
+    `TransferWise ID`, and keying on the id alone would merge the fee into the
+    transfer and lose it.
+
     Deliberately excludes `balance_after` and `raw_row`: a running balance
     differs between statements that start at different points in the ledger, and
     `raw_row` carries per-export noise like column order.
     """
+    if txn.external_id:
+        marker, identity = EXTERNAL_ID_FINGERPRINT, txn.external_id
+    else:
+        # `Transaction` already collapses whitespace on the way in.
+        marker, identity = DESCRIPTION_FINGERPRINT, txn.description.lower()
     return _SEPARATOR.join(
         (
-            FINGERPRINT_VERSION,
+            marker,
             txn.source_institution,
             account_ref,
             txn.date.isoformat(),
@@ -31,8 +57,7 @@ def _fingerprint(txn: Transaction, account_ref: str) -> str:
             # matches the NUMERIC(20, 4) the value is stored in.
             f"{txn.amount:.4f}",
             txn.currency,
-            # `Transaction` already collapses whitespace on the way in.
-            txn.description.lower(),
+            identity,
         )
     )
 
@@ -46,7 +71,9 @@ def dedupe_key(txn: Transaction, *, account_ref: str | None, occurrence: int) ->
 
     Returns None when the statement carries no account reference. Without one,
     two different accounts at the same institution could share a fingerprint,
-    and merging them would attribute someone else's money to this account.
+    and merging them would attribute someone else's money to this account. An
+    external id does not lift that requirement: institutions promise their ids
+    are unique within an account, not across every account they hold.
     """
     if not account_ref:
         return None

@@ -96,6 +96,10 @@ class Transaction(Base):
     # Denormalized from the owning statement: a unique index cannot span a join,
     # and `dedupe_key` is only meaningful when scoped to an account.
     account_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The institution's own id, when it publishes one. Not unique and not
+    # indexed: it feeds the fingerprint rather than being looked up, and it is
+    # not unique per row anyway — Wise reuses one across a transfer and its fee.
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     date: Mapped[Date]
     description: Mapped[str] = mapped_column(Text)
