@@ -4,12 +4,12 @@ A FastAPI service that accepts an uploaded bank or broker statement (CSV or PDF)
 detects which institution produced it, parses it into one normalized transaction
 schema, validates it, and stores it in Postgres.
 
-**Status: CSV and PDF, one real institution.** Upload → detect → parse →
+**Status: CSV and PDF, two real institutions.** Upload → detect → parse →
 validate → store is wired end to end and covered by tests against a real
-Postgres. Three adapters are live: `revolut` (CSV, against an anonymized copy of
-its export) and `dummy_bank` in both CSV and PDF, the reference implementations
-that demonstrate the contract. Adding an institution — or a second format for
-one — means adding one file; see
+Postgres. Four adapters are live: `revolut` and `wise` (CSV, against anonymized
+copies of their exports) and `dummy_bank` in both CSV and PDF, the reference
+implementations that demonstrate the contract. Adding an institution — or a
+second format for one — means adding one file; see
 [The adapter pattern](#the-adapter-pattern).
 
 ---
@@ -395,6 +395,49 @@ an adapter exists that models asset quantities.
 One consequence worth knowing: because fees expand into extra rows,
 `transaction_count` counts transactions produced, not lines in the file.
 
+### What a *second* real format forces: `wise`
+
+The point of a second institution is not another adapter. It is finding out which
+of the first adapter's decisions were about statements in general and which were
+about Revolut — and the answer turned out to be uncomfortable.
+
+Wise's balance statement looks like Revolut's: a signed `Amount`, a
+`Running Balance`, and a fee column beside them. Reading the fee column the way
+Revolut's is read **double-counts every fee in the file**, because Wise has
+already accounted for it by the time you see the row, in one of two ways:
+
+- on a transfer, as *its own row* — `"Wise Charges for: TRANSFER-9003"`, carrying
+  the same id as the transfer it belongs to;
+- on a card payment, folded into `Amount` itself.
+
+Both readings are checkable inside the file, and they agree: `Running Balance`
+reconciles against `Amount` alone. On the six-row fixture, applying Revolut's
+rule lands the closing balance €2.57 below the one Wise printed — a wrong number,
+not an error, on a file that parsed cleanly.
+
+So the same column concept means opposite things at two institutions, and neither
+adapter can be written from the other. What made the difference decidable was
+arithmetic that the export itself supplies — which is a reason to want a running
+balance in a fixture even when nothing reads it.
+
+Three smaller decisions:
+
+**Dates are day-first.** `03-04-2026` is 3 April. Read as month-first it silently
+becomes 4 March — every row wrong, nothing raised.
+
+**Detection is a subset match, for a sharper reason than Revolut's.** Wise has
+shipped 19-, 20- and 23-column versions of this export while keeping the column
+*names*, so an exact-header rule would have broken on their release schedule
+rather than on anything a user did. The required set is the intersection of the
+vintages, anchored on `TransferWise ID` — a name no other institution emits,
+which is what keeps a loose rule from colliding.
+
+**`account_ref` is the currency.** There is no account number here, and
+`Payee Account Number` is the *counterparty's*: scoping identity by it would file
+every transaction under whoever was paid. One Wise file is one currency balance,
+so `wise|EUR` is a real account scope — with the same single-tenant caveat as
+`revolut|Current`.
+
 ### What a PDF forces: `dummy_bank`, again
 
 A statement PDF is a table with no table markup. `dummy_bank` therefore has two
@@ -457,8 +500,9 @@ src/statement_normalizer/
     ├── base.py          StatementFile, StatementParser (the contract)
     ├── registry.py      ParserRegistry, detect/parse routing
     ├── exceptions.py    NoMatchingParser, AmbiguousParserMatch, StatementParseError
-    ├── csv_fields.py    shared money/date cell parsing, with row-level errors
+    ├── csv_fields.py    shared row iteration and money/date cell parsing, with row-level errors
     ├── revolut_csv.py   Revolut CSV export
+    ├── wise_csv.py      Wise balance statement CSV
     ├── dummy_csv.py     reference adapter (CSV)
     └── dummy_pdf.py     reference adapter (PDF), column geometry from word positions
 migrations/              Alembic
@@ -483,12 +527,23 @@ debit column from a credit one.
 
 ## Known gaps
 
-- **Only one real institution.** `revolut` is the only adapter for a format we
+- **Two real institutions.** `revolut` and `wise` are the adapters for formats we
   did not invent; `dummy_bank` remains as the reference implementation.
-- **Revolut's header is confirmed against its published format, not against a
-  real download.** The ten column names and the `%Y-%m-%d %H:%M:%S` timestamps
-  are corroborated by independent third-party importers, but no export from an
-  actual account has been through this parser.
+- **Neither real format has been checked against a download of our own.** Both
+  headers, date formats and — for Wise — sample rows with reconciling balances
+  are corroborated by several independent third-party importers and by real
+  exports committed to public repositories, which is much better than memory and
+  is not the same as an export from an actual account.
+- **`wise` uses the statement's currency as its account reference.** One Wise
+  file is one currency balance, so `wise|EUR` is a real scope — but a user with
+  two Wise profiles has two `EUR` balances, and this cannot tell them apart.
+  The filename carries a balance id (`statement_12055917_EUR_…`) that would, if
+  the upload path ever preserved it.
+- **`wise` reads `Total fees` for nothing.** The column is kept in `raw_row` but
+  never becomes a transaction, because Wise has already accounted for it. If a
+  vintage ever charges a fee it does *not* account for, the money goes missing
+  silently — the reconciliation test on the fixture is what would catch it, and
+  only for the fixture.
 - **Revolut's crypto/trading export is rejected, not parsed.** It is recognized
   well enough to be declined (see above) rather than misread, but a user who
   uploads one gets a generic "no parser recognized this file" rather than an

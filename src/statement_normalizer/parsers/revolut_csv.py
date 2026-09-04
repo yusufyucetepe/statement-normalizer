@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import csv
-import io
 from collections.abc import Iterator
 from decimal import Decimal
 from typing import ClassVar
 
 from statement_normalizer.models.schemas import Direction, StatementFormat, Transaction
 from statement_normalizer.parsers.base import StatementFile, StatementParser
-from statement_normalizer.parsers.csv_fields import normalize_header, to_date, to_decimal
+from statement_normalizer.parsers.csv_fields import (
+    dict_rows,
+    normalize_header,
+    to_date,
+    to_decimal,
+)
 from statement_normalizer.parsers.exceptions import StatementParseError
 from statement_normalizer.parsers.registry import registry
 
@@ -101,14 +105,7 @@ class RevolutCsvParser(StatementParser):
         return None
 
     def _rows(self, file: StatementFile) -> Iterator[tuple[int, dict[str, str]]]:
-        """Non-empty data rows, with their 1-based line number for error messages."""
-        reader = csv.DictReader(io.StringIO(file.text))
-        if reader.fieldnames is None:
-            raise StatementParseError(self.institution, "file is empty")
-        reader.fieldnames = [normalize_header(name) for name in reader.fieldnames]
-        for row_number, row in enumerate(reader, start=2):  # row 1 is the header
-            if any((value or "").strip() for value in row.values()):
-                yield row_number, row
+        return dict_rows(file, institution=self.institution)
 
     def _to_transactions(self, row: dict[str, str], row_number: int) -> list[Transaction]:
         """Convert one source row into zero, one, or two normalized transactions."""

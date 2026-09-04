@@ -181,6 +181,27 @@ def test_a_real_adapter_deduplicates_overlapping_downloads(upload, client, count
     assert sorted(shared["statement_ids"]) == sorted([first["id"], second["id"]])
 
 
+def test_a_second_institution_deduplicates_and_stays_out_of_the_first(upload, client, count_rows):
+    """The same overlap proof on Wise, plus the thing a second real institution
+    is actually for: two accounts at two banks must not merge. The fingerprint is
+    scoped by institution and account, so `wise|EUR` and `revolut|Current` cannot
+    collide however similar their rows look.
+    """
+    wise = upload("wise_statement.csv").json()
+    overlap = upload("wise_overlap.csv").json()
+    revolut = upload("revolut_statement.csv").json()
+
+    assert wise["source_institution"] == "wise"
+    assert wise["account_ref"] == "EUR"
+    assert (wise["transaction_count"], wise["new_transaction_count"]) == (6, 6)
+    assert (overlap["transaction_count"], overlap["new_transaction_count"]) == (6, 2)
+
+    # 6 + 2 new from the overlap, and Revolut's 8 kept wholly separate.
+    assert count_rows("transactions") == 8 + revolut["transaction_count"]
+    assert client.get("/transactions?institution=wise").json()["total"] == 8
+    assert client.get("/transactions?institution=revolut").json()["total"] == 8
+
+
 def test_the_same_transaction_in_two_formats_is_stored_once(upload, client, count_rows):
     """Identity is a property of the transaction, not of the file it arrived in.
 

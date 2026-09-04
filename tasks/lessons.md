@@ -144,3 +144,25 @@ rather than trust the fixture to produce them.
 actually have different times before touching the query. And when a test depends
 on a value the harness supplies rather than the code under test, set the value
 explicitly — the assertion should fail for the reason it names.
+
+## The same column at two institutions can mean opposite things
+
+The Revolut adapter turns its `Fee` column into a second transaction, because
+Revolut's `Balance` has already subtracted it. Wise publishes a fee column beside
+a signed amount and a running balance too — and doing the same thing there
+double-counts every fee, because Wise already emits the charge as its own row (or
+folds it into the amount). Same shape, opposite meaning, and the second reading
+produces a clean parse with a wrong total.
+
+**Why:** the first adapter for a category quietly becomes the template for the
+next one, and its decisions get reused as if they were facts about statements
+rather than facts about that institution. Nothing fails loudly when the
+assumption travels — that is exactly why it is worth checking.
+
+**How to apply:** when a second institution's export has a column the first one
+also had, re-derive what it means from that export's own data instead of copying
+the handling. Prefer evidence the file supplies itself: a running balance that
+chains against the amounts settles a fee question in one arithmetic check, which
+is a reason to want a balance column in a fixture even when nothing reads it.
+And when a real export is available, read the *rows*, not just the header — the
+header would not have shown either of this milestone's two findings.

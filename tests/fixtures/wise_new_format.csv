@@ -1,0 +1,3 @@
+"TransferWise ID",Date,"Date Time",Amount,Currency,Description,"Payment Reference","Running Balance","Exchange From","Exchange To","Exchange Rate","Payer Name","Payee Name","Payee Account Number",Merchant,"Card Last Four Digits","Card Holder Full Name",Attachment,Note,"Total fees","Exchange To Amount","Transaction Type","Transaction Details Type"
+CARD-9101,03-04-2026,"03-04-2026 09:14:22.104",-12.40,EUR,"Card transaction of 12.40 EUR issued by Baeckerei",,987.60,,,,,,,Baeckerei,4321,"Test User",,,0.00,,DEBIT,
+TRANSFER-9102,04-04-2026,"04-04-2026 17:02:51.880",250.00,EUR,"Received money from Acme GmbH","INV-2026-04",1237.60,,,,"Acme GmbH",,,,,,,,0.00,,CREDIT,

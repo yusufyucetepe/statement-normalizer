@@ -345,8 +345,79 @@ commits the upload fails its foreign key and rolls back whole. Loud, not silent
 — no statement is left short a row. The upload's caller gets a `500`, which is
 recorded in Known gaps as deserving a `409` instead.
 
+## Milestone 10 — the second real institution (Wise CSV)
+
+The point of a second institution is not another adapter. It is finding out which
+of the first adapter's decisions were about statements in general and which were
+about Revolut. The answer was uncomfortable, and it is the whole milestone.
+
+**The finding.** Wise's balance statement looks like Revolut's — signed `Amount`,
+`Running Balance`, a fee column beside them. Reading the fee column the way
+Revolut's is read double-counts every fee in the file: Wise has already accounted
+for it, either as its own row (`"Wise Charges for: TRANSFER-…"`, sharing the
+transfer's id) or folded into `Amount` on a card payment. On the six-row fixture,
+Revolut's rule lands the closing balance €2.57 below the one Wise printed. A
+wrong number on a file that parses cleanly — the failure this project exists to
+prevent, and it came from reusing a decision rather than re-taking it.
+
+**The second finding, which killed the original plan.** This milestone was going
+to key `dedupe_key` on Wise's `TransferWise ID`, attacking the top-flagged risk
+in Known gaps (identity leaning on the description). Reading real exports showed
+the id is **not row-unique**: a transfer and its charge row carry the same one.
+Keying on it would have collapsed the fee into its parent — data loss, silently.
+The id is a transaction *group*, so that work is now its own item below with the
+constraint written down.
+
+Decisions: no synthetic fee rows, argued in `_to_transaction` and provable from
+the file's own arithmetic; `REQUIRED_COLUMNS` is the *intersection* of the three
+shipped vintages (19/20/23 columns), anchored on `transferwise_id`; dates are
+`%d-%m-%Y` day-first, not `Date Time` (absent from the old vintage);
+`account_ref` is the statement currency, not `Payee Account Number` — which is
+the counterparty's and would file every transaction under whoever was paid;
+`Payment Reference` is appended to the description, because two payments to the
+same payee on the same day are otherwise identical and identity would merge them.
+
+- [x] `parsers/wise_csv.py`, registered and re-exported
+- [x] `csv_fields.dict_rows` — the row iterator was about to be copied a second
+      time, which is what that module exists to prevent; `revolut_csv` now uses it
+- [x] Fixtures: `wise_statement.csv` (old vintage, balances reconcile through a
+      real charge row), `wise_new_format.csv` (23-column vintage),
+      `wise_overlap.csv`, `wise_malformed.csv`
+- [x] 10 parser tests, 1 registry test (two subset-matching adapters must still
+      route unambiguously), 1 persistence test (overlap dedupe on Wise + the two
+      institutions staying out of each other's totals)
+- [x] README: "What a *second* real format forces", refreshed Known gaps
+- [x] No migration — nothing about the schema changed
+
+### Verification performed
+
+- `uv run pytest` with no `TEST_DATABASE_URL` → 60 passed, 34 skipped.
+- `TEST_DATABASE_URL=... uv run pytest` → **94 passed** against real Postgres 16.
+- `alembic check` → "No new upgrade operations detected".
+- The fee decision, checked against the file's own arithmetic: opening + the sum
+  of parsed amounts = 1257.78 = the closing `Running Balance`. Synthesizing fee
+  rows lands it at 1255.21.
+- HTTP end to end: `/parsers` lists four adapters; `wise_statement.csv` → 6 new,
+  `wise_overlap.csv` → 6 rows / 2 new, `wise_new_format.csv` → 2 new, all
+  `account_ref: EUR`; `?institution=wise` → 10 and `?institution=revolut` → 8,
+  so the two institutions do not merge.
+- `ruff check` / `ruff format --check` clean.
+
+### Format sources
+
+Header, vintages and day-first dates corroborated across `ofxstatement-
+transferwise`, `jlabath/wiseconvert` (`%d-%m-%Y`), `BananaAccounting/Universal`,
+`OSadovy/uabean` and `metabrainz.org`. The fee behaviour was read off real
+committed exports (`kedder/ofxstatement-transferwise` sample, `uabean` fixtures)
+where `787.62 - 11.35 = 776.27` settles it.
+
 ## Next
 
+- [ ] Use an institution's own transaction id in `dedupe_key` when it publishes
+      one, so identity stops leaning on the description. **Constraint found in
+      milestone 10:** Wise's id is not row-unique — a transfer and its charge row
+      share it — so the id must join the fingerprint (replacing the description),
+      never replace the whole key.
 - [ ] Check the Revolut adapter against a real export — the header is confirmed
       against the published format and third-party importers, but no download
       from an actual account has been through it.

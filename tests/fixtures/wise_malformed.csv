@@ -1,0 +1,3 @@
+"TransferWise ID",Date,Amount,Currency,Description,"Payment Reference","Running Balance","Exchange From","Exchange To","Exchange Rate","Payer Name","Payee Name","Payee Account Number",Merchant,"Card Last Four Digits","Card Holder Full Name",Attachment,Note,"Total fees","Exchange To Amount"
+TRANSFER-9201,05-02-2026,500.00,EUR,"Topped up balance",,1500.00,,,,,,,,,,,,0.00,
+CARD-9202,06-02-2026,not-a-number,EUR,"Card transaction of 84.00 PLN issued by Kawiarnia Krakow",,1480.28,,,,,,,"Kawiarnia Krakow",1234,"Test User",,,0.00,

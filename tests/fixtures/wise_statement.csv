@@ -1,0 +1,7 @@
+"TransferWise ID",Date,Amount,Currency,Description,"Payment Reference","Running Balance","Exchange From","Exchange To","Exchange Rate","Payer Name","Payee Name","Payee Account Number",Merchant,"Card Last Four Digits","Card Holder Full Name",Attachment,Note,"Total fees","Exchange To Amount"
+TRANSFER-9001,05-02-2026,500.00,EUR,"Topped up balance",,1500.00,,,,,,,,,,,,0.00,
+CARD-9002,06-02-2026,-19.72,EUR,"Card transaction of 84.00 PLN issued by Kawiarnia Krakow",,1480.28,EUR,PLN,4.25000,,,,"Kawiarnia Krakow",1234,"Test User",,,0.07,84.00
+TRANSFER-9003,07-02-2026,-300.00,EUR,"Sent money to Jane Doe","Rent February",1180.28,EUR,PLN,4.30000,,"Jane Doe","PL12345678901234567890",,,,,,2.50,1290.00
+TRANSFER-9003,07-02-2026,-2.50,EUR,"Wise Charges for: TRANSFER-9003","Sending money",1177.78,,,,,Wise,,,,,,,0.00,
+TRANSFER-9004,08-02-2026,125.00,EUR,"Received money from Ayse Yilmaz","INV-2026-02",1302.78,,,,"Ayse Yilmaz",,,,,,,,0.00,
+CARD-9005,09-02-2026,-45.00,EUR,"Card transaction of 45.00 EUR issued by Cafe Bohm",,1257.78,,,,,,,"Cafe Bohm",1234,"Test User",,,0.00,

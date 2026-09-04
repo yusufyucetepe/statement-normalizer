@@ -120,3 +120,12 @@ def test_the_revolut_crypto_export_is_claimed_by_nobody(statement_file):
     """Better unrecognized than misread: no adapter models asset quantities."""
     with pytest.raises(NoMatchingParser):
         registry.detect(statement_file("revolut_crypto.csv"))
+
+
+def test_two_loose_matching_adapters_still_route_unambiguously(statement_file):
+    """Revolut and Wise both detect on a header *subset*, which is the rule most
+    able to produce an ambiguous match. Each file must be claimed by one of them
+    and declined by the other."""
+    assert registry.detect(statement_file("wise_statement.csv")).institution == "wise"
+    assert registry.detect(statement_file("wise_new_format.csv")).institution == "wise"
+    assert registry.detect(statement_file("revolut_statement.csv")).institution == "revolut"
