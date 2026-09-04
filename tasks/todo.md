@@ -297,6 +297,54 @@ transaction, confirmed by the distinct times over HTTP above), so the test now
 stamps distinct times rather than trusting the fixture, and the tie the harness
 does produce is what `test_paging_visits_every_statement_exactly_once` exercises.
 
+## Milestone 9 — deleting a statement (done)
+
+Closes the gap milestone 8 documented: uploading the wrong file was permanent
+short of opening a psql shell. The lifecycle now closes — upload, list, read,
+delete.
+
+The semantics were the work, not the SQL. There is no `statement_id` column on
+`transactions` to delete by: overlapping statements share rows, so dropping
+everything the statement contained would silently shorten its neighbours, and
+dropping nothing would leak every row it introduced. The rule that keeps both
+`/transactions` and `?statement_id=` honest is that a transaction goes when its
+*last* statement does.
+
+Decisions: a `200` with `{deleted, retained}` counts rather than a bare `204`,
+because the split depends on what the other statements hold and the caller
+cannot derive it; the statement row is deleted first so its links cascade away
+and the orphan sweep asks about the statements that *remain*; a second delete of
+the same id is `404`, not an idempotent `204`, since the id no longer names
+anything and pretending otherwise hides a confused client.
+
+- [x] `StatementDeleted` schema
+- [x] `DELETE /statements/{statement_id}`, orphan sweep via a correlated
+      `NOT EXISTS` over the surviving links
+- [x] 6 tests, including the shared-row case and delete-then-re-upload
+- [x] README: "Deleting a statement", the named race, refreshed Known gaps
+- [x] No migration — `ON DELETE CASCADE` was already in `0003`
+
+### Verification performed
+
+- `uv run pytest` with no `TEST_DATABASE_URL` → 49 passed, 33 skipped.
+- `TEST_DATABASE_URL=... uv run pytest` → **82 passed** against real Postgres 16.
+- `alembic check` → "No new upgrade operations detected".
+- HTTP end to end: two overlapping uploads → 6 transactions, 4 apiece. Deleting
+  January returned `deleted 2 / retained 2`, left 4 transactions, and the
+  overlap statement still reported all 4 of its own rows. `GET` and a second
+  `DELETE` on the dead id → 404; re-uploading the same file → 201.
+- OpenAPI: `delete` on `/statements/{statement_id}` with a `StatementDeleted` ref.
+- `ruff check` / `ruff format --check` clean.
+
+### The race, measured rather than assumed
+
+An upload linking a transaction that a concurrent delete is collecting was the
+one interleaving worth checking, so it was run by hand over two connections:
+Postgres blocks the link insert on the delete's row lock, and when the delete
+commits the upload fails its foreign key and rolls back whole. Loud, not silent
+— no statement is left short a row. The upload's caller gets a `500`, which is
+recorded in Known gaps as deserving a `409` instead.
+
 ## Next
 
 - [ ] Check the Revolut adapter against a real export — the header is confirmed

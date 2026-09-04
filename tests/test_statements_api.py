@@ -1,4 +1,4 @@
-"""Reading back uploaded statements. Require TEST_DATABASE_URL."""
+"""Reading back and deleting uploaded statements. Require TEST_DATABASE_URL."""
 
 import uuid
 from datetime import UTC, datetime
@@ -112,3 +112,73 @@ def test_a_rejected_upload_leaves_nothing_to_list(client, upload):
     assert upload("dummy_bank_malformed.csv").status_code == 422
 
     assert client.get("/statements").json()["total"] == 0
+
+
+@pytest.fixture
+def overlapping_pair(upload):
+    """Two statements sharing two transactions: 4 + 4 rows, 6 stored."""
+    return upload("dummy_bank_statement.csv").json(), upload("dummy_bank_overlap.csv").json()
+
+
+def test_deleting_a_lone_statement_takes_its_transactions_with_it(client, upload, count_rows):
+    statement = upload("dummy_bank_statement.csv").json()
+
+    body = client.delete(f"/statements/{statement['id']}").json()
+
+    assert body["deleted_transaction_count"] == 4
+    assert body["retained_transaction_count"] == 0
+    assert client.get(f"/statements/{statement['id']}").status_code == 404
+    assert count_rows("transactions") == 0
+    assert count_rows("statement_transactions") == 0
+
+
+def test_a_shared_transaction_outlives_the_statement_it_arrived_in(client, overlapping_pair):
+    """The whole reason this endpoint is not `DELETE FROM transactions`: the two
+    rows January shares with the overlap belong to both. Removing them would
+    silently shorten a statement nobody asked to change."""
+    january, overlap = overlapping_pair
+
+    body = client.delete(f"/statements/{january['id']}").json()
+
+    assert body["deleted_transaction_count"] == 2  # the two only January held
+    assert body["retained_transaction_count"] == 2  # the two the overlap also holds
+    page = client.get("/transactions", params={"statement_id": overlap["id"]}).json()
+    assert page["total"] == 4  # the surviving statement is still whole
+
+
+def test_deleting_both_statements_leaves_nothing_behind(client, overlapping_pair, count_rows):
+    """The shared rows are retained by the first delete and collected by the
+    second: a row goes when its last statement does, not before and not never."""
+    january, overlap = overlapping_pair
+
+    client.delete(f"/statements/{january['id']}")
+    body = client.delete(f"/statements/{overlap['id']}").json()
+
+    assert body["deleted_transaction_count"] == 4
+    assert body["retained_transaction_count"] == 0
+    assert count_rows("transactions") == 0
+
+
+def test_a_deleted_statement_can_be_uploaded_again(client, upload):
+    """`content_sha256` is what rejects a re-upload, and it went with the row —
+    so a delete is genuinely undoable rather than blocklisting the file."""
+    statement = upload("dummy_bank_statement.csv").json()
+    client.delete(f"/statements/{statement['id']}")
+
+    again = upload("dummy_bank_statement.csv")
+
+    assert again.status_code == 201
+    assert again.json()["new_transaction_count"] == 4
+
+
+def test_deleting_an_unknown_statement_is_not_found(client):
+    assert client.delete(f"/statements/{uuid.uuid4()}").status_code == 404
+
+
+def test_a_delete_is_not_idempotent_in_the_second_call(client, upload):
+    """404 rather than 204 on the second call: the id no longer names anything,
+    and pretending otherwise hides a client that lost track of what it deleted."""
+    statement = upload("dummy_bank_statement.csv").json()
+
+    assert client.delete(f"/statements/{statement['id']}").status_code == 200
+    assert client.delete(f"/statements/{statement['id']}").status_code == 404

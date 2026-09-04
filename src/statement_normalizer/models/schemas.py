@@ -100,6 +100,24 @@ class StatementRead(BaseModel):
     uploaded_at: datetime
 
 
+class StatementDeleted(BaseModel):
+    """What `DELETE /statements/{id}` removed.
+
+    A body rather than a bare 204 because the interesting number is not derivable
+    by the caller: overlapping statements share transaction rows, so how many
+    transactions a delete actually removes depends on what the *other* statements
+    still hold. `retained` is the count that outlived this statement.
+    """
+
+    statement_id: UUID
+    deleted_transaction_count: int = Field(
+        description="Transactions removed: those no surviving statement still references."
+    )
+    retained_transaction_count: int = Field(
+        description="Transactions kept, because another statement also contains them."
+    )
+
+
 class Page[ItemT](BaseModel):
     """One page of a list endpoint, with the size of the full result set.
 

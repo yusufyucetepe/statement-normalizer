@@ -80,6 +80,7 @@ migrations, real JSONB, and real `NUMERIC`, and still leave no residue.
 | `GET`  | `/transactions`      | Filters: `date_from`, `date_to`, `direction` (`credit`/`debit`), `institution`, `statement_id`, `limit`, `offset`. Returns `{items, total, limit, offset}`. |
 | `GET`  | `/statements`        | Uploaded statements, most recent first. Filters: `institution`, `limit`, `offset`. Same envelope. |
 | `GET`  | `/statements/{id}`   | One statement. **404** if no statement has that id. |
+| `DELETE` | `/statements/{id}` | Removes the statement and the transactions no other statement still holds. **404** if unknown. |
 | `GET`  | `/parsers`           | The live adapters, in the order detection considers them. |
 | `GET`  | `/health`            | Liveness. |
 
@@ -139,6 +140,38 @@ Ordering is `uploaded_at` descending with `id` as a tiebreaker. The tiebreaker i
 not decoration: `uploaded_at` defaults to Postgres' `now()`, which is the
 *transaction* timestamp, so any two statements written in the same transaction
 share it exactly and would otherwise page unstably.
+
+### Deleting a statement
+
+Deleting is not `DELETE FROM transactions WHERE statement_id = …`, because there
+is no such column: overlapping statements share rows, and a shared row belongs to
+all of them. Dropping every row the statement contained would silently shorten
+the statements that overlap it; dropping none would leak every row it introduced.
+The rule that keeps both queries honest is that **a transaction goes when its last
+statement does**.
+
+```bash
+curl -X DELETE "http://localhost:8000/statements/e86a38b2-..."
+# { "statement_id": "e86a38b2-...",
+#   "deleted_transaction_count": 2, "retained_transaction_count": 2 }
+```
+
+It answers with a body rather than a bare `204` because that split is not
+derivable by the caller — how much a delete actually removes depends on what the
+*other* statements hold. Deleting January from an overlapping pair removes only
+the rows February did not also contain, and February still reports its full four.
+
+The statement row goes first, taking its links with it via `ON DELETE CASCADE`;
+the orphan sweep that follows asks which of those transactions no *surviving*
+statement references. Because `content_sha256` lives on the deleted row, the same
+file can be uploaded again afterwards — a delete is undoable, not a blocklist.
+
+One race is worth naming: an upload linking a transaction that a concurrent
+delete is collecting. Postgres blocks the link insert on the delete's row lock,
+and if the delete commits first the upload fails its foreign key and rolls back
+whole — verified by hand against two connections. The upload's caller sees a
+`500` and nothing is stored, which is a poor answer to a request but not a wrong
+one: no statement is ever left short a row it should have.
 
 ### Re-uploading the same file
 
@@ -483,10 +516,13 @@ debit column from a credit one.
 - **Rows stored before migration `0003` have a NULL `dedupe_key`** and never
   match later uploads. Backfilling would have meant reimplementing the
   fingerprint in SQL; re-uploading those statements is the intended fix.
-- **A statement cannot be deleted.** Uploading the wrong file is permanent
-  short of touching the database. The semantics are the interesting part rather
-  than the SQL: transactions are shared between overlapping statements, so a
-  delete has to drop only the rows no surviving statement still references.
+- **A delete is not audited and cannot be undone from inside the service.** The
+  rows are gone, not tombstoned. Re-uploading the file restores its transactions,
+  but the statement gets a new id, and any row it had shared with a statement
+  deleted in the meantime comes back with a fresh `created_at`.
+- **An upload racing a delete of a row it shares fails with a `500`.** Postgres
+  serializes the two and the upload loses its foreign key, rolling back whole —
+  safe, but the caller deserves a `409` and a retry rather than a server error.
 - **Pagination is offset-based.** Fine at this size, but a deep `offset` makes
   Postgres walk everything it skips, and `total` is a full `COUNT` on every
   request. A keyset cursor over `(date, id)` is the fix when a table gets large

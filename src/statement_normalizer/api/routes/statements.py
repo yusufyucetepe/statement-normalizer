@@ -2,7 +2,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy import insert, select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -10,7 +10,7 @@ from statement_normalizer.api.deps import RegistryDep, SessionDep
 from statement_normalizer.api.paging import count_matching
 from statement_normalizer.config import get_settings
 from statement_normalizer.models.identity import assign_dedupe_keys
-from statement_normalizer.models.schemas import StatementPage, StatementRead
+from statement_normalizer.models.schemas import StatementDeleted, StatementPage, StatementRead
 from statement_normalizer.models.tables import Statement as StatementRow
 from statement_normalizer.models.tables import StatementTransaction as LinkRow
 from statement_normalizer.models.tables import Transaction as TransactionRow
@@ -127,6 +127,54 @@ def get_statement(session: SessionDep, statement_id: uuid.UUID) -> StatementRow:
     if statement is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no statement with id {statement_id}")
     return statement
+
+
+@router.delete(
+    "/{statement_id}",
+    response_model=StatementDeleted,
+    responses={404: {"description": "No statement with this id."}},
+)
+def delete_statement(session: SessionDep, statement_id: uuid.UUID) -> StatementDeleted:
+    """Delete a statement and the transactions no other statement still holds.
+
+    Deleting the transactions outright would corrupt every statement that
+    overlaps this one: they share rows, and a shared row belongs to all of them.
+    Deleting none of them would instead leak every row this statement introduced.
+    So the rule is the only one that keeps both queries honest — a transaction
+    goes when its last statement does.
+
+    Uploading these bytes again afterwards is accepted rather than 409'd: the
+    `content_sha256` that rejected the re-upload went with the statement.
+    """
+    if session.get(StatementRow, statement_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no statement with id {statement_id}")
+
+    linked = list(
+        session.scalars(select(LinkRow.transaction_id).where(LinkRow.statement_id == statement_id))
+    )
+
+    # Delete the statement first: its links go with it via ON DELETE CASCADE, so
+    # the orphan test below is asking about the statements that remain.
+    session.execute(delete(StatementRow).where(StatementRow.id == statement_id))
+
+    deleted = 0
+    if linked:
+        still_linked = (
+            select(LinkRow.transaction_id)
+            .where(LinkRow.transaction_id == TransactionRow.id)
+            .exists()
+        )
+        result = session.execute(
+            delete(TransactionRow).where(TransactionRow.id.in_(linked), ~still_linked)
+        )
+        deleted = result.rowcount
+    session.commit()
+
+    return StatementDeleted(
+        statement_id=statement_id,
+        deleted_transaction_count=deleted,
+        retained_transaction_count=len(linked) - deleted,
+    )
 
 
 def _persist(session, statement_file: StatementFile, result: ParseResult) -> StatementRow:
