@@ -183,3 +183,22 @@ usual signals that say "this is a breaking change" are all absent.
 and pin the old shape to a literal digest in a test that says what breaking it
 costs. Prove the old digest is unchanged against the previous commit rather than
 assuming a careful edit was careful enough — `git stash` and compute both.
+
+## Test a diagnostic tool against fixtures whose answers you already know
+
+`inspect_real_file.py` was written to check adapters against real files, and its
+first run against `revolut_statement.csv` — a fixture built so the balances
+reconcile exactly — reported a preamble that is not there and a balance chain
+that breaks. Both were bugs in the tool: a raw comma count mistook a quoted
+payee name for a wider row, and the chain check compared a EUR balance against a
+GBP one and read the deliberate fee split as money going missing.
+
+**Why:** a tool whose whole purpose is to tell you whether something else is
+wrong has no natural error signal of its own. Pointed at an unknown real file it
+would have reported both faults as findings about the *bank*, and the fix would
+have been applied to the adapter.
+
+**How to apply:** run any new diagnostic against the existing fixtures first and
+require the answers to match what they were built to demonstrate. A fixture with
+a documented invariant — here, "balances reconcile exactly, fees included" — is
+a test for the checker, not only for the parser.

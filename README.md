@@ -379,6 +379,35 @@ Tests build a throwaway `ParserRegistry()` rather than mutating global state.
 
 `dummy_csv.py` is the reference implementation — copy its shape.
 
+### Checking a real export first
+
+Every adapter here was written against a format description rather than a
+download from an actual account, which is the largest standing risk in the
+project — a header that is wrong by one column name turns every upload into a
+422, and a date order that is wrong misdates every row without raising anything.
+
+`scripts/inspect_real_file.py` answers both questions from one real file, without
+that file entering the repository:
+
+```bash
+uv run python scripts/inspect_real_file.py ~/Downloads/statement.csv
+uv run python scripts/inspect_real_file.py ~/Downloads/statement.pdf
+```
+
+It reports which adapters claim the file and, for each that does not, the missing
+columns in terms of that adapter's own rule; the column names with an inferred
+kind; whether the file's own dates prove a day/month order; and for a PDF whether
+there is a text layer at all, where the header row sits, and how many amount
+columns there are. If an adapter does claim the file it parses it and checks that
+the running balances reconcile against the amounts — which tests the signs, the
+direction mapping and the fee handling at once.
+
+**The output is redacted by default**: descriptions and cell values are reduced
+to a length, so it is safe to paste into an issue. `--show-values` prints them
+verbatim. Nothing is written and no database is touched. `--assume revolut` runs
+an adapter against a file detection did not claim, which separates "the header
+rule is wrong" from "the whole format is wrong".
+
 ### What a real format forces: `revolut`
 
 `dummy_bank` is a layout we invented, so it fits the normalized schema by
@@ -545,6 +574,7 @@ src/statement_normalizer/
     ├── dummy_csv.py     reference adapter (CSV)
     └── dummy_pdf.py     reference adapter (PDF), column geometry from word positions
 migrations/              Alembic
+scripts/                 inspect_real_file.py — report on a real export, redacted
 tests/fixtures/          sample statement exports
 ```
 

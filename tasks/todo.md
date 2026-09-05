@@ -457,10 +457,57 @@ promise ids are unique within an account, not across every account they hold.
   unaffected, `external_id: null`, still 8 rows.
 - `ruff check` / `ruff format --check` clean.
 
+## Milestone 12 — a way to check a real file (done)
+
+Both remaining items need a statement from an actual account, and the reason
+neither had moved is that the obvious way to do them is wrong: dropping a real
+export into `tests/fixtures/` publishes an account history, and scrubbing one so
+the balances still chain is fiddly enough to be its own task. Verifying an
+adapter and committing a fixture are separate jobs, and only the second needs
+the file to be in the repo at all.
+
+`scripts/inspect_real_file.py` does the first: point it at a file anywhere on
+disk and it reports detection, layout and — where an adapter claims the file —
+a parse with a balance reconciliation. Descriptions and cell values are redacted
+to a length by default, so the output can be pasted into an issue.
+
+- [x] Detection: per adapter, claimed or the missing columns in terms of that
+      adapter's own published rule (`REQUIRED_COLUMNS` / `HEADER` / `MASTHEAD`);
+      a `can_parse` that raises is reported as the contract violation it is
+- [x] CSV: quote-aware delimiter sniff, preamble rows above the header, ragged
+      rows, per-column inferred kind and fill rate, latin-1 fallback warning
+- [x] CSV: whether the file's own dates *prove* a day/month order, or whether
+      no component exceeds 12 and the order is unprovable from the file
+- [x] PDF: text layer or scanned image, encrypted, truncated, not-a-PDF; the
+      header row with each word's x centre; money-word clusters, which is what
+      says whether the layout has debit/credit columns or one signed column
+- [x] Parse: counts, account_ref, currencies, date range, direction split,
+      external_id coverage, and a per-currency balance chain that accumulates
+      across rows carrying no balance (the fee-split case)
+- [x] `--assume <institution>` to separate "the header rule is wrong" from
+      "the whole format is wrong"; `--show-values` to opt out of redaction
+- [x] README: "Checking a real export first" under the adapter pattern
+
+Verification: run against all 18 fixtures plus hand-built adversarial files —
+a latin-1 semicolon export with three preamble rows and a quoted comma, an
+empty file, a scanned image PDF, a truncated PDF, and a non-PDF named `.pdf`.
+Two bugs surfaced by running it against fixtures whose answers were already
+known: a raw comma count called a quoted payee name a preamble row, and the
+balance check compared EUR balances against GBP ones and treated the Revolut
+fee split as a break. Both fixed; the Revolut and Wise fixtures now reconcile
+at every checkable point. 69 passed / 35 skipped, ruff clean.
+
 ## Next
 - [ ] Check the Revolut adapter against a real export — the header is confirmed
       against the published format and third-party importers, but no download
-      from an actual account has been through it.
+      from an actual account has been through it. **Unblocked by
+      `scripts/inspect_real_file.py`**: Revolut app → the account → Statement →
+      the Excel/CSV option → run the script on it. A range with an ATM
+      withdrawal or an exchange is worth more than a long one, since the fee
+      split is the decision most able to be wrong.
 - [ ] A real institution's PDF. `dummy_pdf` is built against a fixture we
       generate, so its layout assumptions (a header row, one line per
-      transaction plus wraps) have not met a real statement.
+      transaction plus wraps) have not met a real statement. Any bank will do —
+      the adapter does not have to exist yet, because what is being tested is
+      whether the *approach* survives: run the script and read the PDF LAYOUT
+      section. A scanned statement with no text layer is a real answer.
