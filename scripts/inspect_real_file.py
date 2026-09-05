@@ -25,10 +25,12 @@ import csv
 import io
 import re
 import sys
+import zipfile
 from collections import Counter, defaultdict
 from decimal import Decimal, InvalidOperation
 from itertools import islice
 from pathlib import Path
+from typing import NamedTuple
 
 # Run from a checkout without installing the package first.
 _SRC = Path(__file__).resolve().parent.parent / "src"
@@ -81,10 +83,15 @@ def main() -> int:
         return 2
 
     file = StatementFile.from_path(path)
-    _file_section(file, path)
+    container = _container(file)
+    _file_section(file, path, container)
     claimed = _detection_section(file)
 
-    if file.format is StatementFormat.PDF:
+    if container is not None:
+        # Reading a workbook as text produces a page of mojibake and a column
+        # table of nonsense, which reads like a finding about the statement.
+        _container_section(container)
+    elif file.format is StatementFormat.PDF:
         _pdf_section(file, show=args.show_values)
     else:
         _csv_section(file, show=args.show_values)
@@ -92,7 +99,7 @@ def main() -> int:
     parser = _parser_to_run(claimed, args.assume)
     if parser is not None:
         _parse_section(file, parser, show=args.show_values)
-    _next_steps(file, claimed, args.assume)
+    _next_steps(file, claimed, container, args.assume)
     return 0
 
 
@@ -118,14 +125,16 @@ def _parse_args() -> argparse.Namespace:
 # --------------------------------------------------------------------------- file
 
 
-def _file_section(file: StatementFile, path: Path) -> None:
+def _file_section(file: StatementFile, path: Path, container: _Container | None) -> None:
     _heading("FILE")
     _field("name", path.name)
     _field("size", f"{len(file.content):,} bytes")
     _field("sha256", file.sha256)
     _field("extension", file.extension or "(none)")
     _field("format", file.format.value if file.format else "(unrecognized — upload would 422)")
-    if not file.is_pdf:
+    if container is not None:
+        _field("contents", container.label)
+    elif not file.is_pdf:
         _field("encoding", _encoding(file.content))
 
 
@@ -142,6 +151,82 @@ def _encoding(content: bytes) -> str:
     except UnicodeDecodeError as exc:
         return f"NOT utf-8 (byte {exc.start}) — decoded as latin-1, accents may be wrong"
     return "utf-8"
+
+
+# ---------------------------------------------------------------------- container
+
+
+class _Container(NamedTuple):
+    """A file whose bytes are not the rows, however it is named."""
+
+    label: str
+    advice: list[str]
+
+
+#: Convert-to-CSV wording shared by every workbook format, and the warning that
+#: goes with it. A spreadsheet round trip is not lossless for this project's
+#: purposes: it is the one step that can rewrite a date without saying so.
+_CONVERT = [
+    "No adapter reads spreadsheets — the dependencies here are deliberately",
+    "minimal — so export or re-save this as CSV and run the script again.",
+    "",
+    "Watch the date order line in the CSV output afterwards. Excel and",
+    "LibreOffice rewrite dates into the machine's locale on the way out, so a",
+    "day-first export can come back month-first, silently, with every row wrong.",
+    "Long reference numbers can also come back in scientific notation.",
+    "Prefer the institution's own CSV download over converting, when it offers one.",
+]
+
+
+def _container(file: StatementFile) -> _Container | None:
+    """Identify a file whose bytes are a container rather than rows of text.
+
+    Worth doing because the failure is otherwise silent-ish: a workbook decodes
+    through the latin-1 fallback into mojibake and gets a column table built out
+    of it, which looks like a report about the statement rather than about the
+    file being the wrong kind of thing entirely.
+    """
+    content = file.content
+    if content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return _Container("a legacy Excel workbook (.xls, OLE2 compound file)", _CONVERT)
+    if content.startswith(b"PK\x03\x04"):
+        label = _zip_kind(content)
+        if label.startswith("a zip archive"):
+            return _Container(label, ["Unpack it and run the script on the statement inside."])
+        return _Container(label, _CONVERT)
+
+    # A bank portal serving an HTML table under an .xls name is a real and old
+    # habit; the file opens in Excel, which is all the bank was promising.
+    start = content[:2048].lstrip().lower()
+    if start.startswith((b"<html", b"<!doctype html", b"<table", b"<?xml")) and b"<t" in start:
+        return _Container(
+            "HTML, not a spreadsheet, whatever the extension says",
+            [
+                "Excel opens this happily, which is why banks get away with it.",
+                "Open it in a spreadsheet and save as CSV, then run the script again.",
+            ],
+        )
+    return None
+
+
+def _zip_kind(content: bytes) -> str:
+    """Tell .xlsx from .ods from a plain zip by what is inside it."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            names = set(archive.namelist())
+    except zipfile.BadZipFile:
+        return "a truncated or corrupt zip"
+    if any(name.startswith("xl/") for name in names):
+        return "a modern Excel workbook (.xlsx, a zip of XML)"
+    if "content.xml" in names:
+        return "an OpenDocument spreadsheet (.ods, a zip of XML)"
+    return f"a zip archive of {len(names)} file(s) — perhaps the statement is inside it"
+
+
+def _container_section(container: _Container) -> None:
+    _heading("NOT A TEXT FILE")
+    for line in container.advice:
+        print(f"  {line}" if line else "")
 
 
 # ---------------------------------------------------------------------- detection
@@ -563,8 +648,17 @@ def _describe(txn: Transaction, *, show: bool) -> str:
 # --------------------------------------------------------------------------- exit
 
 
-def _next_steps(file: StatementFile, claimed: list[StatementParser], assume: str | None) -> None:
+def _next_steps(
+    file: StatementFile,
+    claimed: list[StatementParser],
+    container: _Container | None,
+    assume: str | None,
+) -> None:
     _heading("WHAT TO REPORT")
+    if container is not None:
+        print("  Nothing yet — this file is not rows of text. Convert it to CSV as")
+        print("  described above and run the script on the result.")
+        return
     if claimed:
         print("  The adapter claimed the file. Worth reporting: the transaction count")
         print("  against what you can count in the statement yourself, and the balance")

@@ -486,6 +486,12 @@ to a length by default, so the output can be pasted into an issue.
       across rows carrying no balance (the fee-split case)
 - [x] `--assume <institution>` to separate "the header rule is wrong" from
       "the whole format is wrong"; `--show-values` to opt out of redaction
+- [x] Containers identified by magic bytes rather than read as text: `.xls`
+      (OLE2), `.xlsx`/`.ods` (zip of XML, told apart by what is inside), a
+      plain zip, and an HTML table served under an `.xls` name. Each says what
+      to do instead, with the warning that a spreadsheet round trip rewrites
+      dates into the machine's locale — the failure this project cares about
+      most, since it is wrong rows rather than an error
 - [x] README: "Checking a real export first" under the adapter pattern
 
 Verification: run against all 18 fixtures plus hand-built adversarial files —

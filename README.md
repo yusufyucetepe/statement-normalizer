@@ -408,6 +408,16 @@ verbatim. Nothing is written and no database is touched. `--assume revolut` runs
 an adapter against a file detection did not claim, which separates "the header
 rule is wrong" from "the whole format is wrong".
 
+**Spreadsheets are not supported.** `.xls`, `.xlsx` and `.ods` are containers,
+not rows of text; reading one as CSV yields a page of mojibake, so the script
+identifies it by magic bytes and says so instead. It also catches the older
+habit of serving an HTML table under an `.xls` name, which Excel opens happily
+and no CSV reader can. Export to CSV and re-run — but prefer the institution's
+own CSV download to converting, because a spreadsheet round trip rewrites dates
+into the machine's locale, and a day-first export can come back month-first with
+every row wrong and nothing raised. The script's date-order line is the check
+for exactly that.
+
 ### What a real format forces: `revolut`
 
 `dummy_bank` is a layout we invented, so it fits the normalized schema by
