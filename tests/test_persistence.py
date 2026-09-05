@@ -253,3 +253,53 @@ def test_the_same_transaction_in_two_formats_is_stored_once(upload, client, coun
         if row["description"] == "CARD PAYMENT TO UTILITIES CO"
     )
     assert sorted(shared["statement_ids"]) == sorted([csv_statement["id"], pdf_statement["id"]])
+
+
+def test_a_third_institution_deduplicates_across_a_split_download(upload, client, count_rows):
+    """Ziraat, whose export is newest-first and whose table starts on line 6.
+
+    The two downloads overlap on the 21.08 transfer group and on the first of
+    two identical card fees charged on 29.08 — the second had not happened yet
+    when the first file was downloaded. That pair is the interesting part: they
+    share a fingerprint, so recognizing the first one again while storing the
+    second depends on repeats being numbered consistently between the files.
+    """
+    first = upload("ziraat_statement.csv").json()
+    second = upload("ziraat_overlap.csv").json()
+
+    assert first["source_institution"] == "ziraat"
+    assert first["account_ref"] == "TR330001000000123456789012"
+    assert (first["transaction_count"], first["new_transaction_count"]) == (7, 7)
+    assert (second["transaction_count"], second["new_transaction_count"]) == (7, 2)
+
+    assert count_rows("statements") == 2
+    assert count_rows("transactions") == 9  # the union, not 14
+    assert count_rows("statement_transactions") == 14
+
+    # Both identical card fees are stored: two charges, not one duplicated.
+    rows = client.get("/transactions?limit=1000").json()["items"]
+    card_fees = [r for r in rows if r["description"] == "KART AİDATI"]
+    assert len(card_fees) == 2
+    assert {r["date"] for r in card_fees} == {"2026-08-29"}
+
+
+def test_a_newest_first_export_is_stored_oldest_first(upload, client):
+    """The adapter reverses the file, so the stored statement reads forwards and
+    its running balances chain."""
+    statement = upload("ziraat_statement.csv").json()
+    rows = client.get("/transactions", params={"statement_id": statement["id"]}).json()["items"]
+
+    assert [r["date"] for r in rows] == sorted(r["date"] for r in rows)
+    assert rows[0]["description"] == "MAAŞ ÖDEMESİ"
+    assert Decimal(rows[0]["balance_after"]) == Decimal("6000.00")
+
+
+def test_two_institutions_in_different_currencies_stay_separate(upload, client, count_rows):
+    """`ziraat|TR33…` and `revolut|Current` cannot collide however similar their
+    rows look, and a TRY balance is never chained onto a GBP one."""
+    upload("ziraat_statement.csv")
+    upload("revolut_statement.csv")
+
+    assert client.get("/transactions?institution=ziraat").json()["total"] == 7
+    assert client.get("/transactions?institution=revolut").json()["total"] == 8
+    assert count_rows("transactions") == 15

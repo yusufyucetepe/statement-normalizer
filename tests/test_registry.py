@@ -129,3 +129,29 @@ def test_two_loose_matching_adapters_still_route_unambiguously(statement_file):
     assert registry.detect(statement_file("wise_statement.csv")).institution == "wise"
     assert registry.detect(statement_file("wise_new_format.csv")).institution == "wise"
     assert registry.detect(statement_file("revolut_statement.csv")).institution == "revolut"
+
+
+def test_every_real_adapter_claims_only_its_own_export(statement_file):
+    """Three adapters now detect on a loose rule, which is the arrangement most
+    able to produce a silent mis-attribution: a file claimed by the wrong
+    institution is stored under the wrong name without anything failing."""
+    expected = {
+        "revolut_statement.csv": "revolut",
+        "wise_statement.csv": "wise",
+        "wise_new_format.csv": "wise",
+        "ziraat_statement.csv": "ziraat",
+        "ziraat_overlap.csv": "ziraat",
+        "dummy_bank_statement.csv": "dummy_bank",
+    }
+    for filename, institution in expected.items():
+        assert registry.detect(statement_file(filename)).institution == institution
+
+
+def test_a_statement_whose_table_starts_late_is_still_routed(statement_file):
+    """Ziraat's header is on line 6, under a block of account metadata. The
+    other CSV adapters sniff line 1, so they must decline it rather than reading
+    the greeting as a header row."""
+    file = statement_file("ziraat_statement.csv")
+    claimants = [parser.institution for parser in registry.candidates(file)]
+
+    assert claimants == ["ziraat"]

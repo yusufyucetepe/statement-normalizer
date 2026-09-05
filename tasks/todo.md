@@ -503,6 +503,88 @@ balance check compared EUR balances against GBP ones and treated the Revolut
 fee split as a break. Both fixed; the Revolut and Wise fixtures now reconcile
 at every checkable point. 69 passed / 35 skipped, ruff clean.
 
+## Findings from the first real export (2026-09-05)
+
+A Turkish bank's `Hesap Hareketleri` CSV — the first file from an actual account
+to go through anything here. It was not inspected for its own sake: it broke
+three of the script's assumptions and found one live bug in the project.
+
+**`to_decimal` silently mis-parses European numbers.** It strips commas and
+keeps dots, so `1.204,55` becomes `1.20455` and `-42,90` becomes `-4290` — a
+wrong number, out by a factor of a thousand, on a file that parses cleanly and
+stores without complaint. No institution shipped here uses that convention, so
+nothing is currently broken; the next European adapter written without noticing
+would be. **Unfixed** — the fix is a decision, because the convention cannot be
+inferred per cell (`1.234` is either) and so has to be declared by the adapter.
+This file itself uses `1,234.56` and is unaffected.
+
+**Every row is padded to the widest one**, so the header sits under 11 rows of
+greeting and account metadata that are all still 5-field rows. Preamble
+detection compared field counts and found nothing; it now compares *non-empty*
+counts and picks the candidate that reads like column titles.
+
+**A misidentified header row printed the account holder's name** into output
+whose whole purpose is to be safe to paste. Column names print verbatim because
+they are format rather than content — but only once the row is established as
+column names, so an unrecognized header is now redacted like any other cell.
+
+**Money has no fixed decimal places**: `450` for 450.00, `12,345.6` for
+12,345.60. A rule demanding two decimals read three columns of money as text.
+Column kinds are now a majority vote, which also surfaces the four footer rows
+sitting inside the date column as `odd` rather than hiding the column's type.
+
+Columns, for whenever an adapter is written: `Tarih` (dd.mm.yyyy, day-first
+proven), `Fiş No` (a per-row id — an `external_id` candidate), `Açıklama`,
+`İşlem Tutarı` (signed, sign carries direction), `Bakiye` (running balance).
+45 transactions, 5 preamble rows, 4 footer rows, UTF-8.
+
+## Milestone 13 — the first adapter from a real account (`ziraat`, done)
+
+Ziraat Bankası's `Hesap Hareketleri` CSV. Not chosen for its own sake: it was
+the one real download available, and the point was to find out how much a
+published format description leaves out. The answer is most of what mattered.
+
+Decisions, each argued where it is taken:
+- [x] `table_rows` in `csv_fields`: hand an adapter the rows before a header is
+      assumed. The table starts on line 6 under a block of account metadata, and
+      every row is padded to the widest, so `DictReader` reads the greeting as
+      the header and nothing about the shape says otherwise
+- [x] A row is a transaction iff it starts with `dd.mm.yyyy`. Below the table sit
+      a totals line and four lines of boilerplate, all padded to full width — and
+      the totals line writes `Borç:-2.262,07` in the European convention while
+      every transaction row writes `-2,262.07`, so reading it would be out by a
+      factor of a thousand with no error
+- [x] Reverse the file: the export is newest-first, and `balance_after` is only
+      a running balance read forwards. The decision most worth disagreeing with,
+      and the cost — statement order no longer matches file order — is stated
+- [x] Detection is the columns *and* an IBAN with bank code `00010`. `Tarih`,
+      `Açıklama` and `Bakiye` are what every Turkish bank calls those columns;
+      matching on them alone would file a competitor's export under this name
+- [x] Synthesize nothing: `KOMİSYON`, `BSMV` and the message fee are already
+      rows sharing the transfer's `Fiş No`. Wise's rule, not Revolut's, and the
+      balance reconciliation inside the file is the evidence
+- [x] `account_ref` is the IBAN — the first account scope here that survives the
+      service growing users
+- [x] Currency is read once for the document and mapped `TL` -> `TRY`; a
+      statement that does not say raises rather than defaulting
+- [x] `external_id` is `Fiş No`, a transaction *group* id like Wise's
+- [x] `fold_header` in `csv_fields`: Turkish `İ` lowercases to `i` plus a
+      combining dot above, so `"i̇şlem_tutarı"` in source is one invisible
+      codepoint from the real key. Folding to ASCII makes the constants
+      greppable and therefore reviewable
+
+Verification: 87 passed / 38 skipped with no DB; **125 passed** against real
+Postgres 16; `alembic check` clean and no migration needed. Against the actual
+download: detection claims it and nothing else does; 45 transactions parsed,
+all 45 carrying an id (24 distinct — a group id, as designed); the balance chain
+reconciles at all 44 points; upload stores 45 and the identical bytes return
+409. An earlier download of the same account, built by dropping the 10 newest
+rows, reports **0 new** and leaves the total at 45 — overlap dedupe proven on a
+real account rather than a fixture.
+
+Also fixed: the inspection script printed `account_ref` verbatim, which for this
+institution is an IBAN. It is redacted to a shape now, like every other value.
+
 ## Next
 - [ ] Check the Revolut adapter against a real export — the header is confirmed
       against the published format and third-party importers, but no download

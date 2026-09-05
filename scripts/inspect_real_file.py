@@ -27,7 +27,7 @@ import re
 import sys
 import zipfile
 from collections import Counter, defaultdict
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from itertools import islice
 from pathlib import Path
 from typing import NamedTuple
@@ -51,6 +51,17 @@ from statement_normalizer.parsers.csv_fields import normalize_header  # noqa: E4
 _MONEY = re.compile(r"^[^\d\-(]{0,3}[-(]?\d[\d,. ]*[.,]\d{2}\)?-?$")
 #: A cell that looks like a date with separators, whatever the field order.
 _DATE = re.compile(r"^\s*(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})")
+#: A money cell, captured down to its digits and separators. Tolerates a sign or
+#: parentheses, a leading currency symbol and a trailing currency code, and does
+#: not insist on decimal places — see `_numeric_core`.
+_NUMERIC = re.compile(
+    r"""^\s*[-+(]?\s*[₺€£$¥]?\s*           # sign, then a currency symbol if it leads
+        (\d[\d.,\s]*\d|\d)                 # the digits and their separators
+        \s*(?:TL|TRY|USD|EUR|GBP|[₺€£$¥])? # a currency code, if it trails
+        \s*\)?\s*-?\s*$                    # closing paren, or a trailing minus
+    """,
+    re.VERBOSE,
+)
 #: PDF words within this many points of each other vertically are one line.
 _LINE_TOLERANCE = 3.0
 #: Column headers worth reporting the position of, lowercased.
@@ -325,6 +336,14 @@ def _csv_section(file: StatementFile, *, show: bool) -> None:
             "can_parse only reads the first line, so detection cannot see this header",
         )
     raw_header, data = rows[preamble], rows[preamble + 1 :]
+    # Column names are format, not content, so they print verbatim — but only
+    # once this row is established as column names. A misidentified header is
+    # how an account holder's name would end up in output meant to be safe to
+    # paste, so an unrecognized one is redacted like any other cell value.
+    titled = _looks_like_titles(raw_header)
+    if not titled:
+        _note("No row reads as column titles; the names below are redacted because")
+        _note("this row may be part of the statement rather than a header.")
 
     _field("columns", str(len(raw_header)))
     _field("data rows", str(len(data)))
@@ -333,17 +352,24 @@ def _csv_section(file: StatementFile, *, show: bool) -> None:
         _field("ragged rows", f"rows with {sorted(ragged)} cells instead of {len(raw_header)}")
 
     print()
-    print("  column                          normalized                      kind      filled")
+    print("  column                          normalized                 kind      filled  odd")
     print("  " + "-" * 84)
-    for index, name in enumerate(raw_header):
+    numeric: list[str] = []
+    for index, name in enumerate(_header_names(raw_header, titled=titled or show)):
         values = [row[index].strip() for row in data[:_SAMPLE] if index < len(row)]
         filled = sum(1 for value in values if value)
-        kind = _column_kind(values)
+        kind, agreeing, present = _column_kind(values)
+        odd = present - agreeing
+        if kind == "money":
+            numeric.extend(core for value in values if (core := _numeric_core(value)))
         print(
-            f"  {_clip(name, 30):<30}  {_clip(normalize_header(name), 30):<30}  "
-            f"{kind:<8}  {filled}/{len(values)}"
+            f"  {_clip(name, 30):<30}  {_clip(normalize_header(name), 25):<25}  "
+            f"{kind:<8}  {filled}/{len(values):<5}  {odd or '-'}"
         )
+    _note("'odd' counts cells that do not match their column's dominant kind —")
+    _note("usually a summary or footer row sitting inside the table.")
 
+    _separator_evidence(numeric)
     _date_evidence(raw_header, data)
     if show:
         print()
@@ -375,36 +401,112 @@ def _preamble_rows(rows: list[list[str]]) -> int:
 
     Plenty of banks open an export with the account holder, the period and a
     blank line. Every adapter here sniffs line 1, so this is the difference
-    between "we need a new adapter" and "we need to skip two lines".
+    between "we need a new adapter" and "we need to skip eleven lines".
+
+    Counts *non-empty* cells rather than fields, because the exports that do
+    this most also pad every row to the widest one: a greeting sitting alone in
+    column A is still a five-field row, so field counts are flat down the file
+    and cannot find anything. Non-empty counts are not enough on their own
+    either — a header with a trailing unnamed column has fewer filled cells than
+    its own data rows — so the widest candidates are then filtered to the one
+    that reads like column titles rather than like money and dates.
     """
-    widths = [len(row) for row in rows[:15]]
-    widest = max(widths)
+    counts = [sum(1 for cell in row if cell.strip()) for row in rows[:15]]
+    widest = max(counts)
     if widest < 2:
         return 0
-    first_full = widths.index(widest)
-    # Only call it preamble if every row above is genuinely narrower.
-    return first_full if all(width < widest for width in widths[:first_full]) else 0
+
+    candidates = [index for index, count in enumerate(counts) if count == widest]
+    titled = [index for index in candidates if _looks_like_titles(rows[index])]
+    if titled:
+        return titled[0]
+    first = candidates[0]
+    # No candidate reads as titles: the header may be the row above, short by an
+    # unnamed trailing column.
+    if first > 0 and _looks_like_titles(rows[first - 1]):
+        return first - 1
+    return first
 
 
-def _column_kind(values: list[str]) -> str:
+def _header_names(raw_header: list[str], *, titled: bool) -> list[str]:
+    if titled:
+        return raw_header
+    return [f"<{len(name.strip())} chars>" if name.strip() else "" for name in raw_header]
+
+
+def _looks_like_titles(row: list[str]) -> bool:
+    """Whether a row reads as column names rather than as a row of data."""
+    present = [cell.strip() for cell in row if cell.strip()]
+    if len(present) < 2:
+        return False
+    return not any(_MONEY.match(cell) or _DATE.match(cell) for cell in present)
+
+
+def _column_kind(values: list[str]) -> tuple[str, int, int]:
+    """The column's dominant kind, how many cells agree, and how many are filled.
+
+    A vote rather than a unanimous rule, because a real export puts things in
+    its own table that are not rows of it: a carried-forward balance, a total, a
+    footer of branch addresses. Requiring every cell to agree reports such a
+    column as `text` and hides what it actually holds.
+    """
     present = [value for value in values if value]
     if not present:
-        return "empty"
-    if all(_MONEY.match(value) for value in present):
-        return "money"
-    if all(_DATE.match(value) for value in present):
+        return ("empty", 0, 0)
+    votes = Counter(_cell_kind(value) for value in present)
+    kind, agreeing = votes.most_common(1)[0]
+    return (kind, agreeing, len(present))
+
+
+def _cell_kind(value: str) -> str:
+    if _DATE.match(value):
         return "date"
-    if all(_is_number(value) for value in present):
-        return "number"
-    return "text"
+    core = _numeric_core(value)
+    if core is None:
+        return "text"
+    # A bare run of digits is a reference number as often as it is an amount.
+    # A sign or a separator is what makes it money.
+    signed = value.strip()[0] in "-+(" or value.strip()[-1] == "-"
+    return "money" if signed or any(char in core for char in ".,") else "number"
 
 
-def _is_number(value: str) -> bool:
-    try:
-        Decimal(value.replace(",", "").replace(" ", ""))
-    except InvalidOperation:
-        return False
-    return True
+def _numeric_core(value: str) -> str | None:
+    """The digits-and-separators part of a money cell, or None if it is not one.
+
+    Deliberately loose about the decimal places: this export writes `450` for
+    450.00 and `12,345.6` for 12,345.60, and a rule demanding two decimals reads
+    a whole column of money as text.
+    """
+    match = _NUMERIC.match(value)
+    return match.group(1) if match else None
+
+
+def _separator_evidence(cores: list[str]) -> None:
+    """Which of `.` and `,` this file uses as its decimal point.
+
+    Worth its own line because getting it backwards is not an error. The shared
+    `to_decimal` helper strips commas and keeps dots, so it reads the European
+    `1.204,55` as `1.20455` and `-42,90` as `-4290` — a wrong number, a thousand
+    times out, on a file that parses cleanly and stores without complaint.
+    """
+    votes: Counter[str] = Counter()
+    for core in cores:
+        last = max(core.rfind("."), core.rfind(","))
+        # A separator with exactly three digits after it is a thousands
+        # separator under either convention, so it casts no vote.
+        if last != -1 and len(core) - last - 1 != 3:
+            votes[core[last]] += 1
+    if not votes:
+        return
+
+    separator = votes.most_common(1)[0][0]
+    if separator == ".":
+        _field("decimal point", "'.' as in 1,234.56 — what to_decimal assumes")
+        return
+    _field("decimal point", "',' as in 1.234,56 — EUROPEAN")
+    _note("to_decimal strips commas and keeps dots, so it would read 1.204,55 as")
+    _note("1.20455 and -42,90 as -4290: wrong numbers, no error, stored as money.")
+    _note("An adapter for this institution must convert before calling it.")
 
 
 def _date_evidence(raw_header: list[str], rows: list[list[str]]) -> None:
@@ -560,8 +662,13 @@ def _parse_section(file: StatementFile, parser: StatementParser, *, show: bool) 
         account = parser.extract_account_ref(file)
     except Exception as exc:
         account = f"(raised {type(exc).__name__})"
-    _field("account_ref", str(account) if account else "None — dedupe_key will be NULL")
-    if not account:
+    # An account ref is an IBAN or an account number as often as it is a label,
+    # so it is redacted like a cell value: whether one was found, and its shape,
+    # are the diagnostic parts — the digits never are.
+    if account:
+        _field("account_ref", str(account) if show else _outline(str(account)))
+    else:
+        _field("account_ref", "None — dedupe_key will be NULL")
         _note("Without an account ref every re-download double-counts.")
 
     dates = sorted(txn.date for txn in transactions)
@@ -688,6 +795,22 @@ def _field(label: str, value: str) -> None:
 
 def _note(text: str) -> None:
     print(f"  ~ {text}")
+
+
+def _outline(value: str) -> str:
+    """`"TR330001000000123456789012"` -> `"AA9{24} (26 chars)"`.
+
+    Enough to see that an IBAN was found and that it is the right shape, without
+    reproducing an account number in output whose point is being pasteable.
+
+    The example above is the invented one from `tests/fixtures/`. Writing a real
+    account's identifier here would put it in the repository permanently, which
+    is the exact failure this function exists to prevent — and a docstring is an
+    easy place to forget that, because it does not look like output.
+    """
+    shape = re.sub(r"\d", "9", re.sub(r"[^\W\d_]", "A", value, flags=re.UNICODE))
+    shape = re.sub(r"(.)\1{2,}", lambda m: f"{m.group(1)}{{{len(m.group(0))}}}", shape)
+    return f"{shape} ({len(value)} chars)"
 
 
 def _clip(text: str, width: int) -> str:

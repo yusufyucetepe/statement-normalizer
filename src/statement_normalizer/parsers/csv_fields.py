@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import io
+import unicodedata
 from collections.abc import Iterator
 from datetime import date as Date
 from datetime import datetime
@@ -42,9 +43,46 @@ def dict_rows(file: StatementFile, *, institution: str) -> Iterator[tuple[int, d
             yield row_number, row
 
 
+def table_rows(file: StatementFile, *, institution: str) -> list[tuple[int, list[str]]]:
+    """Non-empty rows as plain cell lists, with the line each ended on.
+
+    The sibling of `dict_rows`, for exports whose table does not start at line 1:
+    a bank that opens with the account holder, the account number and the
+    statement period has no header for `csv.DictReader` to find, and an adapter
+    has to locate it before rows mean anything. Returning a list rather than an
+    iterator is what lets an adapter look at the block above its header, which is
+    where such a file puts the account and the currency.
+
+    `dict_rows` is left to its own reader rather than being rebuilt on this one:
+    it numbers rows as `DictReader` sees them, which skips blank lines, and the
+    error messages of two shipped adapters are pinned to that numbering.
+    """
+    reader = csv.reader(io.StringIO(file.text))
+    rows = [(reader.line_num, row) for row in reader if any((cell or "").strip() for cell in row)]
+    if not rows:
+        raise StatementParseError(institution, "file is empty")
+    return rows
+
+
 def normalize_header(name: str) -> str:
     """`"Completed Date"` -> `"completed_date"`, so lookups survive cosmetic drift."""
     return name.strip().lower().replace(" ", "_")
+
+
+def fold_header(name: str) -> str:
+    """`"İşlem Tutarı"` -> `"islem_tutari"`: `normalize_header` plus its accents.
+
+    Lowercasing alone is not enough once a header leaves ASCII, and the way it
+    fails is invisible. Turkish `İ` lowercases to `i` followed by a *combining
+    dot above*, so the obvious `"i̇şlem_tutarı"` written in a source file is one
+    codepoint away from the key the file actually produces, and the two look
+    identical in every editor. Folding to ASCII makes the column constants
+    greppable and typeable, which is the only way they can be reviewed.
+    """
+    decomposed = unicodedata.normalize("NFKD", name)
+    stripped = "".join(char for char in decomposed if not unicodedata.combining(char))
+    # `ı` (dotless i) has no decomposition to strip, so it is mapped by hand.
+    return normalize_header(stripped.replace("ı", "i").replace("I", "i"))
 
 
 def to_decimal(value: str, *, institution: str, row: int, column: str) -> Decimal:

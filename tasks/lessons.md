@@ -202,3 +202,39 @@ have been applied to the adapter.
 require the answers to match what they were built to demonstrate. A fixture with
 a documented invariant — here, "balances reconcile exactly, fees included" — is
 a test for the checker, not only for the parser.
+
+## One real file is worth more than any amount of reasoning about formats
+
+The inspection script was tested against 18 fixtures and five hand-built
+adversarial files, and looked finished. The first genuine bank export broke
+three of its assumptions in one run: rows padded to a uniform width so preamble
+detection had nothing to compare, money written without fixed decimal places
+(`450`, `12,345.6`), and a footer of branch addresses sitting inside the table.
+It also found a live bug in `to_decimal` that no fixture could have found,
+because every fixture was written by someone who already knew the convention.
+
+**Why:** fixtures encode the assumptions of whoever wrote them. Adversarial
+fixtures encode the *failures that same person could imagine*. Neither reaches
+the things a real institution does for reasons of its own — a padded export is
+not a malformed one, and nobody would think to write that fixture.
+
+**How to apply:** treat "verified against fixtures" as untested for anything
+whose input comes from outside. Get one real artifact through the code before
+believing a format-handling component works, and when it breaks, fix the
+component rather than the fixture.
+
+## Two conventions in one document is not a thing you would ever guess
+
+Ziraat's export writes every transaction amount as `-2,262.07` and then writes
+the totals line directly beneath them as `Borç:-2.262,07` — the same number, the
+other convention, four lines apart in one file. Nothing warns you; both parse.
+
+**Why:** a format description describes the table. The parts of a document that
+are not the table — totals, footers, the account block — are written by
+different code, sometimes by a different team, and they do not have to agree
+with it. The habit of thinking "this file uses convention X" is the bug.
+
+**How to apply:** decide what a data row *is* and take only those, by a positive
+test rather than by excluding what you have noticed so far. Here that is a
+leading `dd.mm.yyyy`. Everything else in the file is then someone else's problem
+by construction, rather than something to be discovered one surprise at a time.

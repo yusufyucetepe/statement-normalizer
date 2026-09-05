@@ -4,13 +4,14 @@ A FastAPI service that accepts an uploaded bank or broker statement (CSV or PDF)
 detects which institution produced it, parses it into one normalized transaction
 schema, validates it, and stores it in Postgres.
 
-**Status: CSV and PDF, two real institutions.** Upload → detect → parse →
+**Status: CSV and PDF, three real institutions.** Upload → detect → parse →
 validate → store is wired end to end and covered by tests against a real
-Postgres. Four adapters are live: `revolut` and `wise` (CSV, against anonymized
-copies of their exports) and `dummy_bank` in both CSV and PDF, the reference
-implementations that demonstrate the contract. Adding an institution — or a
-second format for one — means adding one file; see
-[The adapter pattern](#the-adapter-pattern).
+Postgres. Five adapters are live: `ziraat`, `revolut` and `wise` (CSV) and
+`dummy_bank` in both CSV and PDF, the reference implementations that demonstrate
+the contract. `ziraat` is the only one so far written against a statement
+downloaded from a live account rather than a published description of one, and
+it is the one that found the most. Adding an institution — or a second format
+for one — means adding one file; see [The adapter pattern](#the-adapter-pattern).
 
 ---
 
@@ -516,6 +517,69 @@ every transaction under whoever was paid. One Wise file is one currency balance,
 so `wise|EUR` is a real account scope — with the same single-tenant caveat as
 `revolut|Current`.
 
+### What a file from an actual account forces: `ziraat`
+
+The first two real adapters were written against published format descriptions.
+This one was written against a statement downloaded from a live account, and
+almost everything it forced was something a description would never have
+mentioned.
+
+**The table does not start at line 1.** Five rows of greeting, statement period,
+account number and IBAN come first — and every row in the file is padded to the
+width of the widest, so the account block is not distinguishable from a
+transaction by shape. `csv.DictReader` reads the greeting as a header. So
+`csv_fields` gained `table_rows`, which hands an adapter the rows before any
+header is assumed, and the adapter finds its own.
+
+**A row is a transaction if it starts with a date.** Below the table there is a
+totals line and four lines of branch boilerplate, all padded to full width too.
+The totals line is the reason this matters rather than being tidiness: it writes
+`Borç:-2.262,07`, in the *European* convention, while every transaction row in
+the same document writes `-2,262.07`. One file, two conventions. Anything that
+read both would be out by a factor of a thousand and raise nothing.
+
+**The export is newest-first, and the adapter reverses it.** This is the
+decision here most worth disagreeing with. `balance_after` is a running balance,
+and a running balance only runs one way: a consumer reconciling one down a
+descending list gets the arithmetic backwards on every pair. The order a bank
+picks for its own screen is a presentation choice rather than a fact about the
+account, which makes it the kind of thing a normalizer should absorb. The cost
+is that `GET /transactions?statement_id=` no longer lists this statement in the
+order its file does, unlike every other institution here. Identity is unaffected
+either way — `dedupe_key` numbers repeats within a fingerprint, and rows alike
+enough to share one are alike enough that their order among themselves cannot
+matter.
+
+**Detection needs the bank, not just the columns.** `Tarih`, `Açıklama` and
+`Bakiye` are what *every* Turkish bank calls its date, description and balance
+columns, so matching on those alone would claim a competitor's export and file
+it under this institution with nothing failing. Every Turkish IBAN carries a
+five-digit bank code, so the rule is the columns *and* an IBAN beginning
+`TR..00010` — and unlike a masthead or a footer URL, that cannot be dropped
+without the document ceasing to identify an account at all.
+
+**Charges are already rows** — `KOMİSYON`, `BSMV` (the transaction tax) and the
+fee for the SMS announcing the transfer, each carrying the same `Fiş No` as the
+transfer that caused them. So this follows Wise's rule and not Revolut's, and
+the file supplies its own evidence: `Bakiye` reconciles against `İşlem Tutarı`
+alone. That shared `Fiş No` also makes it a transaction *group* id, which is
+exactly why `external_id` never replaces the rest of the fingerprint.
+
+Three smaller ones. **`account_ref` is the IBAN** — the account number beside it
+identifies the account only within the bank, and unlike `revolut|Current` and
+`wise|EUR` an IBAN stays correct if this service ever grows users. **The
+currency is stated once for the document**, not per row, as `TL` — which is the
+local abbreviation, so it is mapped to ISO 4217 `TRY`; a statement that does not
+say raises rather than defaulting, because defaulting would mislabel every row
+of a foreign-currency account silently. And **money has no fixed decimal
+places**: `5,000` means 5000.00 and `-3.2` means -3.20.
+
+Header matching also needed `fold_header` rather than `normalize_header`,
+because Turkish `İ` lowercases to `i` followed by a *combining dot above* — so
+the obvious `"i̇şlem_tutarı"` in a source file is one invisible codepoint away
+from the key the export actually produces. Folding to ASCII is what makes the
+column constants greppable, and therefore reviewable.
+
 ### What a PDF forces: `dummy_bank`, again
 
 A statement PDF is a table with no table markup. `dummy_bank` therefore has two
@@ -579,6 +643,7 @@ src/statement_normalizer/
     ├── registry.py      ParserRegistry, detect/parse routing
     ├── exceptions.py    NoMatchingParser, AmbiguousParserMatch, StatementParseError
     ├── csv_fields.py    shared row iteration and money/date cell parsing, with row-level errors
+    ├── ziraat_csv.py    Ziraat Bankası CSV export, table not at line 1
     ├── revolut_csv.py   Revolut CSV export
     ├── wise_csv.py      Wise balance statement CSV
     ├── dummy_csv.py     reference adapter (CSV)
@@ -606,13 +671,25 @@ debit column from a credit one.
 
 ## Known gaps
 
-- **Two real institutions.** `revolut` and `wise` are the adapters for formats we
-  did not invent; `dummy_bank` remains as the reference implementation.
-- **Neither real format has been checked against a download of our own.** Both
-  headers, date formats and — for Wise — sample rows with reconciling balances
-  are corroborated by several independent third-party importers and by real
-  exports committed to public repositories, which is much better than memory and
-  is not the same as an export from an actual account.
+- **Three real institutions.** `ziraat`, `revolut` and `wise` are the adapters
+  for formats we did not invent; `dummy_bank` remains as the reference
+  implementation.
+- **`revolut` and `wise` have still not been checked against a download of our
+  own.** Their headers, date formats and — for Wise — sample rows with
+  reconciling balances are corroborated by several independent third-party
+  importers and by real exports committed to public repositories, which is much
+  better than memory and is not the same as an export from an actual account.
+  `ziraat` is the counter-example and the reason to care: it was written against
+  a real download, and the real download turned out to pad every row to a
+  uniform width, start its table on line 6, write money without fixed decimal
+  places, order itself newest-first, and write its totals line in a different
+  decimal convention from the table above it — `Borç:-2.262,07` under rows of
+  `-2,262.07`. No format description mentions any of that.
+- **`ziraat` has been checked against exactly one account's export.** Its
+  fixture is hand-built to the shape of that file. A Ziraat account in a foreign
+  currency, or a statement long enough to paginate, has not been seen — and the
+  currency is read from the end of the account line, which is the assumption in
+  it most likely to be wrong on an account unlike the one it was written from.
 - **`wise` uses the statement's currency as its account reference.** One Wise
   file is one currency balance, so `wise|EUR` is a real scope — but a user with
   two Wise profiles has two `EUR` balances, and this cannot tell them apart.
