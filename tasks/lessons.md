@@ -238,3 +238,22 @@ with it. The habit of thinking "this file uses convention X" is the bug.
 test rather than by excluding what you have noticed so far. Here that is a
 leading `dd.mm.yyyy`. Everything else in the file is then someone else's problem
 by construction, rather than something to be discovered one surprise at a time.
+
+## Redaction has to be checked by something that cannot be reasoned with
+
+Three leaks in one tool. A misidentified header row printed an account holder's
+name; a reported `account_ref` field printed an IBAN; and then a real IBAN
+reached a public commit as the *example in the docstring of the function that
+redacts IBANs*. Each time the reasoning was the same and each time it was wrong:
+this part is structure, not content, so it is safe to print.
+
+**Why:** "is this content?" is a judgement, and it was made three times by the
+same mind that had just decided the output was safe. A docstring is the purest
+case — it does not look like output at all, it looks like documentation, so the
+question never even arises.
+
+**How to apply:** put a mechanical check in CI that reads the bytes and has no
+opinion about which of them are structural. `scripts/check_no_real_accounts.py`
+does this, with fixtures as the allowlist: identifiers are invented in
+`tests/fixtures/` and everything else must quote those. Do this the first time
+real data comes anywhere near the repository, not after it gets in.

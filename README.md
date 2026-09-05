@@ -55,7 +55,15 @@ The `api` service waits for Postgres to pass its healthcheck, then runs
 uv run pytest                 # parser + registry tests; DB tests skip
 uv run ruff check .
 uv run ruff format --check .
+uv run python scripts/check_no_real_accounts.py   # no real IBANs or card numbers
 ```
+
+That last one runs first in CI. `tests/fixtures/` is where identifiers are
+invented, and anything IBAN- or card-shaped anywhere else must be one of those
+values — so a real account number cannot enter the repository by being quoted in
+a test, a comment or a docstring. It exists because one did: a live IBAN reached
+a public commit inside the docstring of the function written to redact IBANs.
+A docstring does not look like output, which is exactly the problem.
 
 Parser and registry tests are pure functions over bytes and need no database.
 The persistence tests skip unless `TEST_DATABASE_URL` is set:
@@ -650,6 +658,7 @@ src/statement_normalizer/
     └── dummy_pdf.py     reference adapter (PDF), column geometry from word positions
 migrations/              Alembic
 scripts/                 inspect_real_file.py — report on a real export, redacted
+                         check_no_real_accounts.py — CI guard against leaked identifiers
 tests/fixtures/          sample statement exports
 ```
 

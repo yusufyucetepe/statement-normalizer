@@ -39,6 +39,11 @@ jobs:
       - name: Install (locked)
         run: uv sync --frozen --all-extras
 
+      # Before anything else: a finding here means something is in the history
+      # that has to come out of it, which is a different job from fixing a test.
+      - name: No real account identifiers
+        run: uv run python scripts/check_no_real_accounts.py
+
       - name: Ruff lint
         run: uv run ruff check --output-format=github .
 

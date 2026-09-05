@@ -25,13 +25,16 @@ def test_detection_needs_the_bank_and_not_only_the_columns(statement_file):
     date, description and balance columns. Matching on those alone would file a
     competitor's export under this institution, so the IBAN's bank code — the
     one field in the document that identifies the bank structurally — has to
-    agree as well."""
-    file = statement_file("ziraat_statement.csv")
-    assert parser.can_parse(file) is True
+    agree as well.
 
-    another_bank = file.text.replace("TR330001000000123456789012", "TR330006200000123456789012")
-    assert "Tarih,Fiş No" in another_bank  # the columns are untouched
-    assert parser.can_parse(_as_file(another_bank)) is False
+    `other_bank_statement.csv` is the adversarial case: the same five column
+    names, the same layout, the same preamble shape, a different bank code.
+    """
+    assert parser.can_parse(statement_file("ziraat_statement.csv")) is True
+
+    other = statement_file("other_bank_statement.csv")
+    assert "Tarih,Fiş No,Açıklama,İşlem Tutarı,Bakiye" in other.text
+    assert parser.can_parse(other) is False
 
 
 def test_the_header_is_found_below_the_account_block(statement_file):
