@@ -3,6 +3,7 @@ import pytest
 from statement_normalizer.models.schemas import StatementFormat, Transaction
 from statement_normalizer.parsers import (
     AmbiguousParserMatch,
+    DecimalConvention,
     DummyBankCsvParser,
     NoMatchingParser,
     ParserRegistry,
@@ -155,3 +156,12 @@ def test_a_statement_whose_table_starts_late_is_still_routed(statement_file):
     claimants = [parser.institution for parser in registry.candidates(file)]
 
     assert claimants == ["ziraat"]
+
+
+def test_every_registered_parser_declares_its_decimal_convention():
+    """`StatementParser` annotates `decimal_convention` without a value, so an
+    adapter that omits it raises `AttributeError` the first time it parses money
+    rather than at import. This is the cheap thing that turns that into a
+    failure at test time instead."""
+    for parser in registry.parsers:
+        assert isinstance(parser.decimal_convention, DecimalConvention), parser.institution

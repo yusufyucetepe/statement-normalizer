@@ -8,6 +8,7 @@ from functools import cached_property
 from typing import ClassVar
 
 from statement_normalizer.models.schemas import StatementFormat, Transaction
+from statement_normalizer.parsers.csv_fields import DecimalConvention
 
 _PDF_MAGIC = b"%PDF-"
 
@@ -143,6 +144,11 @@ class StatementParser(ABC):
     supported_formats: ClassVar[frozenset[StatementFormat]] = frozenset({StatementFormat.CSV})
     #: Higher wins when several parsers claim the same file. Ties are an error.
     priority: ClassVar[int] = 100
+    #: How this institution writes money — `1,234.56` or `1.234,56`. Required and
+    #: deliberately undefaulted: no cell can be classified on its own, so the
+    #: adapter is the only place that knows, and a default would be a guess that
+    #: returns a wrong number instead of an error.
+    decimal_convention: ClassVar[DecimalConvention]
 
     @abstractmethod
     def can_parse(self, file: StatementFile) -> bool:

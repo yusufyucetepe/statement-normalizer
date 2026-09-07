@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from statement_normalizer.models.schemas import Direction, StatementFormat, Transaction
 from statement_normalizer.parsers.base import StatementFile, StatementParser, Word
-from statement_normalizer.parsers.csv_fields import to_date, to_decimal
+from statement_normalizer.parsers.csv_fields import DecimalConvention, to_date, to_decimal
 from statement_normalizer.parsers.exceptions import StatementParseError
 from statement_normalizer.parsers.registry import registry
 
@@ -86,6 +86,7 @@ class DummyBankPdfParser(StatementParser):
     institution: ClassVar[str] = "dummy_bank"
     supported_formats: ClassVar[frozenset[StatementFormat]] = frozenset({StatementFormat.PDF})
     priority: ClassVar[int] = 100
+    decimal_convention: ClassVar[DecimalConvention] = DecimalConvention.ANGLO
 
     MASTHEAD: ClassVar[str] = "DUMMY BANK PLC"
     DATE_FORMAT: ClassVar[str] = "%d %b %Y"
@@ -228,9 +229,21 @@ class DummyBankPdfParser(StatementParser):
             )
 
         raw = row.debit or row.credit
-        amount = to_decimal(raw, institution=self.institution, row=index, column="amount")
+        amount = to_decimal(
+            raw,
+            convention=self.decimal_convention,
+            institution=self.institution,
+            row=index,
+            column="amount",
+        )
         balance = (
-            to_decimal(row.balance, institution=self.institution, row=index, column="balance")
+            to_decimal(
+                row.balance,
+                convention=self.decimal_convention,
+                institution=self.institution,
+                row=index,
+                column="balance",
+            )
             if row.balance
             else None
         )

@@ -7,7 +7,13 @@ from typing import ClassVar
 
 from statement_normalizer.models.schemas import Direction, StatementFormat, Transaction
 from statement_normalizer.parsers.base import StatementFile, StatementParser
-from statement_normalizer.parsers.csv_fields import dict_rows, normalize_header, to_date, to_decimal
+from statement_normalizer.parsers.csv_fields import (
+    DecimalConvention,
+    dict_rows,
+    normalize_header,
+    to_date,
+    to_decimal,
+)
 from statement_normalizer.parsers.exceptions import StatementParseError
 from statement_normalizer.parsers.registry import registry
 
@@ -26,6 +32,7 @@ class WiseCsvParser(StatementParser):
     institution: ClassVar[str] = "wise"
     supported_formats: ClassVar[frozenset[StatementFormat]] = frozenset({StatementFormat.CSV})
     priority: ClassVar[int] = 100
+    decimal_convention: ClassVar[DecimalConvention] = DecimalConvention.ANGLO
 
     #: Columns this adapter reads, normalized. Deliberately the *intersection* of
     #: the export's vintages rather than any one of them: Wise has shipped 19-,
@@ -152,4 +159,10 @@ class WiseCsvParser(StatementParser):
         raw = (row.get(column) or "").strip()
         if not raw:
             return None
-        return to_decimal(raw, institution=self.institution, row=row_number, column=column)
+        return to_decimal(
+            raw,
+            convention=self.decimal_convention,
+            institution=self.institution,
+            row=row_number,
+            column=column,
+        )

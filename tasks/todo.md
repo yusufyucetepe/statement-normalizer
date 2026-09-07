@@ -516,7 +516,7 @@ stores without complaint. No institution shipped here uses that convention, so
 nothing is currently broken; the next European adapter written without noticing
 would be. **Unfixed** — the fix is a decision, because the convention cannot be
 inferred per cell (`1.234` is either) and so has to be declared by the adapter.
-This file itself uses `1,234.56` and is unaffected.
+This file itself uses `1,234.56` and is unaffected. **Fixed in milestone 14.**
 
 **Every row is padded to the widest one**, so the header sits under 11 rows of
 greeting and account metadata that are all still 5-field rows. Preamble
@@ -584,6 +584,51 @@ real account rather than a fixture.
 
 Also fixed: the inspection script printed `account_ref` verbatim, which for this
 institution is an IBAN. It is redacted to a shape now, like every other value.
+
+## Milestone 14 — the decimal convention becomes a declaration (done)
+
+The bug recorded above, taken seriously. `to_decimal` stripped commas and kept
+dots, so `1.204,55` returned `1.20455` and `-42,90` returned `-4290`: not an
+error, a plausible number a thousand times off, on a file that parsed cleanly
+and stored without complaint. Nothing shipped was affected — all five adapters
+write Anglo — which is exactly what made it worth fixing before the adapter that
+would have been.
+
+- [x] `DecimalConvention` (`ANGLO` / `EUROPEAN`) in `csv_fields`, beside the
+      grammar that interprets it. The convention cannot be inferred from a cell
+      — `1.234` is 1234 one way and 1.234 the other — so the adapter declares
+      it, because the adapter is the only thing that knows the institution
+- [x] `to_decimal` takes `convention` keyword-only **with no default**. A default
+      would be a guess wearing a reassuring name, and the failure mode of a guess
+      here is a wrong number rather than an exception
+- [x] A total grammar per convention rather than a `replace()`: a grouping
+      separator is followed by exactly three digits, and the decimal separator
+      appears once and after all of them. This is what makes a *wrong*
+      declaration loud — `1,20455` under `ANGLO` and `2,262.07` under `EUROPEAN`
+      both raise, naming the row and the column like every other cell error here
+- [x] `decimal_convention: ClassVar[DecimalConvention]` on `StatementParser`,
+      annotated without a value like `institution`. No `__init_subclass__`
+      enforcement: forgetting is already loud (a required keyword), and the real
+      hazard is declaring *wrong*, which only the grammar and a test can catch
+- [x] All five adapters declare `ANGLO`; nine call sites thread it through. No
+      behaviour changes — every money cell in all 18 fixtures already satisfies
+      the strict grammar, checked before the first line was written
+- [x] `tests/test_csv_fields.py`, new: `to_decimal` had no direct test at all,
+      only coverage through adapters
+- [x] The Ziraat totals line is no longer merely skipped. A test parses it as
+      `EUROPEAN` and reconciles it against the same statement's rows parsed as
+      `ANGLO` — the only real bank string the European branch has, and it sits
+      in the same file as its opposite
+
+Verification: 120 passed / 38 skipped with no DB — including all four existing
+adapter modules untouched, which is the regression that matters, since the
+fixtures are the evidence that the strict grammar accepts every real Anglo value
+already shipped. **158 passed** against real Postgres 16; `alembic check` clean
+and no migration (this changes parsing, not storage). Against the actual Ziraat
+download: still 45 transactions, balance chain still reconciles at all 44 points,
+upload 201 then 409, total 45 — every number unmoved. And the check the fixture
+could only imitate: the bank's own totals line, in the European convention,
+reconciles to the kuruş against 45 rows read in the Anglo one.
 
 ## Next
 - [ ] Check the Revolut adapter against a real export — the header is confirmed

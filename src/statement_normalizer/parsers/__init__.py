@@ -6,6 +6,7 @@ scanning — so the live parser set stays greppable.
 """
 
 from statement_normalizer.parsers.base import StatementFile, StatementParser, Word
+from statement_normalizer.parsers.csv_fields import DecimalConvention
 from statement_normalizer.parsers.dummy_csv import DummyBankCsvParser
 from statement_normalizer.parsers.dummy_pdf import DummyBankPdfParser
 from statement_normalizer.parsers.exceptions import (
@@ -21,6 +22,7 @@ from statement_normalizer.parsers.ziraat_csv import ZiraatCsvParser
 
 __all__ = [
     "AmbiguousParserMatch",
+    "DecimalConvention",
     "DummyBankCsvParser",
     "DummyBankPdfParser",
     "NoMatchingParser",

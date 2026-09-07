@@ -311,6 +311,18 @@ Two choices worth calling out:
 
 Money is `NUMERIC(20, 4)` in Postgres and `Decimal` in Python, end to end.
 
+**Each adapter declares which decimal convention its institution writes**, as
+`decimal_convention = DecimalConvention.ANGLO` (`1,234.56`) or `.EUROPEAN`
+(`1.234,56`), and `to_decimal` will not parse without one. This is not
+configurability for its own sake: a single cell cannot be classified, because
+`1.234` is 1234 in Bonn and 1.234 in Boston and no amount of looking at it will
+say which. Only the adapter knows, so only the adapter can say — and the
+alternative is not an error but a plausible number that is wrong by a factor of
+a thousand. The grammar is strict in both directions: a group of other than
+three digits, or a decimal point falling before a group separator, raises rather
+than being cleaned up, which is how an adapter that declared the wrong
+convention announces itself on its first file.
+
 ---
 
 ## The adapter pattern
@@ -543,8 +555,16 @@ header is assumed, and the adapter finds its own.
 totals line and four lines of branch boilerplate, all padded to full width too.
 The totals line is the reason this matters rather than being tidiness: it writes
 `Borç:-2.262,07`, in the *European* convention, while every transaction row in
-the same document writes `-2,262.07`. One file, two conventions. Anything that
-read both would be out by a factor of a thousand and raise nothing.
+the same document writes `-2,262.07`. One file, two conventions.
+
+That is also where the convention stopped being an assumption and became a
+declaration — see the schema section above. The adapter still skips the totals
+line, but it is no longer unreadable: a test parses it as `EUROPEAN` and
+reconciles it against the same statement's rows parsed as `ANGLO`. The same
+check was run against the real export, where the bank's own totals line agrees
+to the kuruş with the sum of its 45 rows — the figures stay out of this
+repository, but the agreement is the point. It is the only real bank string the
+European branch has, and it happens to sit in the same file as its opposite.
 
 **The export is newest-first, and the adapter reverses it.** This is the
 decision here most worth disagreeing with. `balance_after` is a running balance,
@@ -650,7 +670,7 @@ src/statement_normalizer/
     ├── base.py          StatementFile, StatementParser (the contract)
     ├── registry.py      ParserRegistry, detect/parse routing
     ├── exceptions.py    NoMatchingParser, AmbiguousParserMatch, StatementParseError
-    ├── csv_fields.py    shared row iteration and money/date cell parsing, with row-level errors
+    ├── csv_fields.py    shared row iteration, DecimalConvention, money/date cells, row-level errors
     ├── ziraat_csv.py    Ziraat Bankası CSV export, table not at line 1
     ├── revolut_csv.py   Revolut CSV export
     ├── wise_csv.py      Wise balance statement CSV

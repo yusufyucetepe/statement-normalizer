@@ -9,7 +9,13 @@ from typing import ClassVar
 
 from statement_normalizer.models.schemas import Direction, StatementFormat, Transaction
 from statement_normalizer.parsers.base import StatementFile, StatementParser
-from statement_normalizer.parsers.csv_fields import fold_header, table_rows, to_date, to_decimal
+from statement_normalizer.parsers.csv_fields import (
+    DecimalConvention,
+    fold_header,
+    table_rows,
+    to_date,
+    to_decimal,
+)
 from statement_normalizer.parsers.exceptions import StatementParseError
 from statement_normalizer.parsers.registry import registry
 
@@ -55,6 +61,7 @@ class ZiraatCsvParser(StatementParser):
     institution: ClassVar[str] = "ziraat"
     supported_formats: ClassVar[frozenset[StatementFormat]] = frozenset({StatementFormat.CSV})
     priority: ClassVar[int] = 100
+    decimal_convention: ClassVar[DecimalConvention] = DecimalConvention.ANGLO
 
     #: Columns this adapter reads, folded to ASCII by `fold_header`. Detection
     #: requires all of them *and* a Ziraat IBAN; see `can_parse`.
@@ -196,9 +203,19 @@ class ZiraatCsvParser(StatementParser):
 
         posted = self._posted(row["tarih"], line)
         amount = to_decimal(
-            row["islem_tutari"], institution=self.institution, row=line, column="islem_tutari"
+            row["islem_tutari"],
+            convention=self.decimal_convention,
+            institution=self.institution,
+            row=line,
+            column="islem_tutari",
         )
-        balance = to_decimal(row["bakiye"], institution=self.institution, row=line, column="bakiye")
+        balance = to_decimal(
+            row["bakiye"],
+            convention=self.decimal_convention,
+            institution=self.institution,
+            row=line,
+            column="bakiye",
+        )
         try:
             return Transaction(
                 date=posted,

@@ -7,7 +7,12 @@ from decimal import Decimal
 import pytest
 
 from statement_normalizer.models.schemas import Direction
-from statement_normalizer.parsers import StatementParseError, ZiraatCsvParser
+from statement_normalizer.parsers import (
+    DecimalConvention,
+    StatementParseError,
+    ZiraatCsvParser,
+)
+from statement_normalizer.parsers.csv_fields import to_decimal
 
 parser = ZiraatCsvParser()
 
@@ -153,6 +158,34 @@ def test_the_totals_line_and_the_footer_are_not_transactions(statement_file):
     assert "www.ziraatbank.com.tr" in file.text
     assert len(transactions) == 7
     assert all(t.description not in {"", "www.ziraatbank.com.tr"} for t in transactions)
+
+
+def test_the_totals_line_reconciles_against_rows_written_the_other_way(statement_file):
+    """The two conventions in this one document, read as the two conventions
+    they are. The parser skips the totals line, so nothing in production depends
+    on this — but it is the only real bank string available for `EUROPEAN`, and
+    it agrees to the kuruş with rows this same export writes as `-2,262.07`. If
+    either convention were wrong, these sums would differ by a factor of a
+    thousand rather than by a rounding error."""
+    file = statement_file("ziraat_statement.csv")
+    transactions = parser.parse(file)
+    line = next(n for n, text in enumerate(file.text.splitlines(), start=1) if "Borç:" in text)
+
+    totals = {
+        label: to_decimal(
+            amount,
+            convention=DecimalConvention.EUROPEAN,
+            institution=parser.institution,
+            row=line,
+            column=label,
+        )
+        for label, amount in re.findall(r"(Borç|Alacak):(-?[\d.,]+)", file.text)
+    }
+
+    debits = sum(t.signed_amount for t in transactions if t.direction is Direction.DEBIT)
+    credits = sum(t.signed_amount for t in transactions if t.direction is Direction.CREDIT)
+    assert totals == {"Borç": Decimal("-2262.07"), "Alacak": Decimal("5000.00")}
+    assert (debits, credits) == (totals["Borç"], totals["Alacak"])
 
 
 def test_account_ref_is_the_iban_not_the_account_number(statement_file):

@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import unicodedata
 from collections.abc import Iterator
 from datetime import date as Date
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from statement_normalizer.parsers.exceptions import StatementParseError
@@ -85,17 +87,61 @@ def fold_header(name: str) -> str:
     return normalize_header(stripped.replace("ı", "i").replace("I", "i"))
 
 
-def to_decimal(value: str, *, institution: str, row: int, column: str) -> Decimal:
-    """Parse a money cell. Never float: the value goes straight into NUMERIC(20, 4)."""
-    cleaned = value.strip().replace(",", "").replace(" ", "")
+class DecimalConvention(StrEnum):
+    """Which separator an institution uses for what.
+
+    Not inferable from a cell, which is the entire reason this exists: `1.234`
+    is 1234 written one way and 1.234 written the other, and looking harder at
+    it will never say which. The adapter declares it, because the adapter is the
+    thing that knows the institution.
+    """
+
+    ANGLO = "anglo"  # 1,234.56
+    EUROPEAN = "european"  # 1.234,56
+
+
+#: Per convention: the grammar a cell must match, its grouping separator, and its
+#: decimal point. The grammar is strict on purpose — a group of other than three
+#: digits, or a decimal point before a group separator, is how an adapter that
+#: declared the wrong convention announces itself instead of returning a number
+#: off by a factor of a thousand.
+_GRAMMAR: dict[DecimalConvention, tuple[re.Pattern[str], str, str]] = {
+    DecimalConvention.ANGLO: (
+        re.compile(r"^[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$"),
+        ",",
+        ".",
+    ),
+    DecimalConvention.EUROPEAN: (
+        re.compile(r"^[-+]?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?$"),
+        ".",
+        ",",
+    ),
+}
+
+
+def to_decimal(
+    value: str, *, convention: DecimalConvention, institution: str, row: int, column: str
+) -> Decimal:
+    """Parse a money cell written in `convention`. Never float: the value goes
+    straight into NUMERIC(20, 4).
+
+    `convention` has no default. A default would be a guess with a reassuring
+    name on it, and a guess here does not fail — it returns a plausible number
+    that is wrong by a thousand.
+    """
+    cleaned = value.strip().replace(" ", "").replace("\u00a0", "")
     if cleaned.startswith("(") and cleaned.endswith(")"):  # (123.45) means negative
         cleaned = "-" + cleaned[1:-1]
-    try:
-        return Decimal(cleaned)
-    except InvalidOperation as exc:
+
+    grammar, grouping, point = _GRAMMAR[convention]
+    if not grammar.match(cleaned):
         raise StatementParseError(
-            institution, f"column {column!r} is not a number: {value!r}", row=row
-        ) from exc
+            institution,
+            f"column {column!r} is not a number in the {convention} convention: {value!r}",
+            row=row,
+        )
+    # Unreachable as a failure: the grammar admits nothing `Decimal` rejects.
+    return Decimal(cleaned.replace(grouping, "").replace(point, "."))
 
 
 def to_date(value: str, *, fmt: str, institution: str, row: int, column: str) -> Date:

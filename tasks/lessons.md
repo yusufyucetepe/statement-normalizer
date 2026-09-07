@@ -257,3 +257,27 @@ opinion about which of them are structural. `scripts/check_no_real_accounts.py`
 does this, with fixtures as the allowlist: identifiers are invented in
 `tests/fixtures/` and everything else must quote those. Do this the first time
 real data comes anywhere near the repository, not after it gets in.
+
+## An ambiguity the data cannot resolve belongs to whoever has the context
+
+`to_decimal` decided, at the bottom of the stack, that commas are thousands
+separators. It was never a decision anyone made — it was the shape of the first
+format that came along, frozen into a `replace()` and then applied to every
+institution that followed. Against a European number it returned an answer a
+thousand times too small, and returned it silently.
+
+**Why:** the information needed to resolve it does not exist in the cell. `1.234`
+is 1234 in Bonn and 1.234 in Boston; no parser, however careful, can tell from
+the string. The knowledge lives two levels up, in the adapter, which is the
+thing that knows the institution. A default at the bottom does not eliminate the
+ambiguity, it just decides it invisibly and in one direction — and the wrong
+direction produces a number rather than an error, which is the worst outcome
+available.
+
+**How to apply:** when a low-level helper cannot resolve something from its
+inputs, do not pick a sensible-looking default. Make the caller state it, with no
+default, so a new caller cannot proceed without deciding. Then make the accepted
+form strict enough that a *wrong* declaration also fails: here, requiring
+grouping separators to be followed by exactly three digits turns a wrong
+`ANGLO`/`EUROPEAN` choice into an error on the first file rather than a thousand
+plausible numbers.

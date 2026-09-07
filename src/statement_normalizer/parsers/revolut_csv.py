@@ -8,6 +8,7 @@ from typing import ClassVar
 from statement_normalizer.models.schemas import Direction, StatementFormat, Transaction
 from statement_normalizer.parsers.base import StatementFile, StatementParser
 from statement_normalizer.parsers.csv_fields import (
+    DecimalConvention,
     dict_rows,
     normalize_header,
     to_date,
@@ -32,6 +33,7 @@ class RevolutCsvParser(StatementParser):
     institution: ClassVar[str] = "revolut"
     supported_formats: ClassVar[frozenset[StatementFormat]] = frozenset({StatementFormat.CSV})
     priority: ClassVar[int] = 100
+    decimal_convention: ClassVar[DecimalConvention] = DecimalConvention.ANGLO
 
     #: Columns this adapter reads, normalized. Detection requires all of them.
     REQUIRED_COLUMNS: ClassVar[frozenset[str]] = frozenset(
@@ -176,7 +178,13 @@ class RevolutCsvParser(StatementParser):
         raw = (row[column] or "").strip()
         if not raw:
             return default
-        return to_decimal(raw, institution=self.institution, row=row_number, column=column)
+        return to_decimal(
+            raw,
+            convention=self.decimal_convention,
+            institution=self.institution,
+            row=row_number,
+            column=column,
+        )
 
     def _build(
         self,

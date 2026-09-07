@@ -6,7 +6,12 @@ from typing import ClassVar
 
 from statement_normalizer.models.schemas import Direction, StatementFormat, Transaction
 from statement_normalizer.parsers.base import StatementFile, StatementParser
-from statement_normalizer.parsers.csv_fields import normalize_header, to_date, to_decimal
+from statement_normalizer.parsers.csv_fields import (
+    DecimalConvention,
+    normalize_header,
+    to_date,
+    to_decimal,
+)
 from statement_normalizer.parsers.exceptions import StatementParseError
 from statement_normalizer.parsers.registry import registry
 
@@ -23,6 +28,7 @@ class DummyBankCsvParser(StatementParser):
     institution: ClassVar[str] = "dummy_bank"
     supported_formats: ClassVar[frozenset[StatementFormat]] = frozenset({StatementFormat.CSV})
     priority: ClassVar[int] = 100
+    decimal_convention: ClassVar[DecimalConvention] = DecimalConvention.ANGLO
 
     #: The exact header this export emits; the fingerprint used for detection.
     HEADER: ClassVar[tuple[str, ...]] = (
@@ -85,12 +91,17 @@ class DummyBankCsvParser(StatementParser):
         )
 
         amount = to_decimal(
-            row["amount"], institution=self.institution, row=row_number, column="amount"
+            row["amount"],
+            convention=self.decimal_convention,
+            institution=self.institution,
+            row=row_number,
+            column="amount",
         )
         balance_raw = (row["running_balance"] or "").strip()
         balance = (
             to_decimal(
                 balance_raw,
+                convention=self.decimal_convention,
                 institution=self.institution,
                 row=row_number,
                 column="running_balance",
