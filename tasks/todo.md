@@ -630,6 +630,44 @@ upload 201 then 409, total 45 — every number unmoved. And the check the fixtur
 could only imitate: the bank's own totals line, in the European convention,
 reconciles to the kuruş against 45 rows read in the Anglo one.
 
+## Findings from the first real PDFs (2026-09-09)
+
+Two statements downloaded from actual accounts, run through
+`scripts/inspect_real_file.py`. Neither produces an adapter, and both are worth
+recording, because a negative answer about a format is still an answer about
+the format.
+
+**Ziraat's PDF export has no text layer.** Two pages and zero extracted words,
+against `/Font 0` and five embedded images. The bank renders the statement to an
+image and wraps it in a PDF. `pdfplumber` returns pages with nothing on them,
+so no adapter can ever read it and no amount of layout work would change that —
+it needs OCR, which this project does not do. This closes the question for
+Ziraat specifically: the CSV/XLSX route that `ziraat_csv` already parses is not
+one option among several, it is the only machine-readable export the bank
+offers. The script's scanned-PDF branch, written blind in milestone 12, printed
+exactly the right thing on the first real file to hit it.
+
+**Wise's PDF is a `Statement of fees`, not a statement of transactions.** It has
+a healthy text layer — 4 pages, 691 words — but the table is service names
+against usage counts (funding fee, receiving fee, card payment fee), with no
+dates and no transactions. It is the annual fee disclosure, a different document
+that happens to live under the same download menu. A transaction statement has
+to be exported per balance rather than per account, which is why the CSV was
+hard to find.
+
+**So `dummy_pdf`'s layout assumptions are still untested.** Neither file is a
+transaction PDF, so the open question — whether reading debit and credit off
+column geometry survives contact with a real bank — stands unanswered. What the
+two files did establish is the *failure* path: both are correctly claimed by
+nobody and would return 422 rather than a partial parse or a 500, and the
+text-layer-less one does not raise anywhere in detection.
+
+**A small corroboration.** The Wise document writes money with a dot decimal
+separator on a Turkish-resident account, where the local convention is a comma.
+`wise_csv`'s `decimal_convention = ANGLO` was declared in milestone 14 from
+published documentation; this is the first evidence for it from a document Wise
+actually produced.
+
 ## Next
 - [ ] Check the Revolut adapter against a real export — the header is confirmed
       against the published format and third-party importers, but no download
@@ -638,9 +676,10 @@ reconciles to the kuruş against 45 rows read in the Anglo one.
       the Excel/CSV option → run the script on it. A range with an ATM
       withdrawal or an exchange is worth more than a long one, since the fee
       split is the decision most able to be wrong.
-- [ ] A real institution's PDF. `dummy_pdf` is built against a fixture we
-      generate, so its layout assumptions (a header row, one line per
-      transaction plus wraps) have not met a real statement. Any bank will do —
-      the adapter does not have to exist yet, because what is being tested is
-      whether the *approach* survives: run the script and read the PDF LAYOUT
-      section. A scanned statement with no text layer is a real answer.
+- [ ] A real institution's PDF with a text layer *and* transactions in it.
+      `dummy_pdf` is built against a fixture we generate, so its layout
+      assumptions (a header row, one line per transaction plus wraps) have not
+      met a real statement. Two candidates were tried on 2026-09-09 and neither
+      answers it — Ziraat's export is a scanned image and Wise's is a fee
+      disclosure (see findings above). Any bank will do, and the adapter does
+      not have to exist yet: run the script and read the PDF LAYOUT section.
