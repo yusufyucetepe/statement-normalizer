@@ -715,11 +715,19 @@ debit column from a credit one.
 - **Three real institutions.** `ziraat`, `revolut` and `wise` are the adapters
   for formats we did not invent; `dummy_bank` remains as the reference
   implementation.
-- **`revolut` and `wise` have still not been checked against a download of our
-  own.** Their headers, date formats and — for Wise — sample rows with
-  reconciling balances are corroborated by several independent third-party
-  importers and by real exports committed to public repositories, which is much
-  better than memory and is not the same as an export from an actual account.
+- **`revolut` has been checked against real exports, but not against a
+  fee-bearing row.** Two anonymized real exports (from `ofxstatement-revolut`,
+  GPL-3.0, kept outside this repo) parse correctly — CRLF, unpadded money like
+  `-250` and `-9.5`, single-digit hours, and `PENDING` rows with no completion
+  date or balance — and one reconciles 6/6 on its balance chain. `Fee` is zero
+  on every row of both, so the two-transaction fee split has still only run
+  against a fixture we wrote, and that is the decision in the adapter most able
+  to be wrong.
+- **`wise` has still not been checked against a real export.** Its header, date
+  format and sample rows with reconciling balances are corroborated by several
+  independent third-party importers and by real exports committed to public
+  repositories, which is much better than memory and is not the same as a file
+  the bank actually produced.
   `ziraat` is the counter-example and the reason to care: it was written against
   a real download, and the real download turned out to pad every row to a
   uniform width, start its table on line 6, write money without fixed decimal

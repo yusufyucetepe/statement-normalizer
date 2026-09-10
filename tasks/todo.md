@@ -720,16 +720,66 @@ range filter on `date`, but Postgres will not use it to satisfy
 preserves order, so it scans and hash-aggregates regardless. At these row counts
 that costs nothing and nothing was changed, but the claim itself is false.
 
+## Findings from two real Revolut exports (2026-09-10)
+
+Two committed test samples from `mlaitinen/ofxstatement-revolut` — real exports
+anonymized by that project's maintainer, not files we generated. GPL-3.0, so they
+stay outside this repository and are never committed. This closes the "check the
+Revolut adapter against a real export" item.
+
+**Nothing needed changing.** Four things these files have that
+`revolut_statement.csv` does not, all already handled:
+
+- **CRLF line endings** (the 2021 file, 8 terminators; the 2022 one is LF). No
+  `\r` survives into any field, `raw_row` included — that being where one would
+  hide, since it keeps the last column verbatim. `dict_rows` hands the text to
+  `csv.DictReader`, and the csv module treats `\r\n` as a row terminator rather
+  than leaving it on the final value.
+- **Unpadded money** — `-250`, `0`, `-9.5`, `500`. The ANGLO grammar's `\d+`
+  branch with an optional `(?:\.\d+)?` covers a bare integer and a single decimal
+  place. Milestone 14 checked that against all 18 fixtures; this is the first
+  confirmation on money nobody here wrote.
+- **Single-digit hours** — `2021-09-06 6:11:59`. `%H` accepts one or two digits
+  in `strptime`; zero-padding is a `strftime` output rule, not an input one.
+- **PENDING rows with an empty `Completed Date` and `Balance`** — dropped, no
+  error: 9 data rows become 7 transactions. This one is order-dependent and the
+  order is load-bearing. `_to_transactions` tests `state` *before* it tests the
+  completion date, so the `raise` for a missing completion date can only fire on
+  a `COMPLETED` row. Swapping those two checks would turn every pending row into
+  a 422.
+
+**The 2021 file reconciles 6/6 on the balance chain.** The 2022 file is an edited
+excerpt and breaks at four points; its balance column proves nothing and was not
+used. Account ref resolves to `Current` on both, as designed.
+
+**A decision these files corroborate that no fixture could.** The 2021 rows are
+not in `Started Date` order — row 2 starts 09-03, after row 1's 09-05 — but are
+strictly ascending in `Completed Date`, and the balance column follows *that*
+order. The adapter dates on `completed_date`. Our fixture has the two columns
+agreeing on every row, so it could never have distinguished the two choices; this
+file does.
+
+**Still unverified: the fee split.** `Fee` is `0` on all 16 rows across both
+files, so the two-transaction split for a fee-bearing row — the decision in this
+adapter most able to be wrong — has still only ever run against a fixture we
+wrote. It stays a known gap.
+
+**Noted, not fixed: a zero-amount `COMPLETED` row.** The 2022 file has
+`Google *temporary Hold` with `Amount` `0.00`, which stores as a *credit* of
+0.00, because `_build` reads `DEBIT if amount < 0 else CREDIT` and zero is not
+less than zero. Totals are unaffected either way; it adds one to
+`transaction_count` and to the credit count in `monthly-totals`. There is no
+correct direction for zero, only a stated one, and stating it is a behaviour
+change this does not need.
+
 ## Next
 
-- [ ] Check the Revolut adapter against a real export — the header is confirmed
-      against the published format and third-party importers, but no download
-      from an actual account has been through it. **Unblocked by
-      `scripts/inspect_real_file.py`**: Revolut app → the account → Statement →
-      the Excel/CSV option → run the script on it. A range with an ATM
-      withdrawal or an exchange is worth more than a long one, since the fee
-      split is the decision most able to be wrong. Verification of an adapter
-      that already ships, so it survives the freeze — but it needs a download.
+Nothing. The last open item — checking `revolut` against a real export —
+closed on 2026-09-10, and everything else is in the freeze below by decision
+rather than by omission. The two things still worth knowing are recorded as
+gaps in the README, not as work: the Revolut fee split has never met a
+fee-bearing real row, and `dummy_pdf`'s column geometry has never met a real
+bank.
 
 ## Scope freeze (2026-09-10)
 
