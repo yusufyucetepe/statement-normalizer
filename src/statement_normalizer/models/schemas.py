@@ -163,3 +163,32 @@ class TransactionPage(Page[TransactionRead]):
 
 class StatementPage(Page[StatementRead]):
     """One page of `GET /statements`."""
+
+
+class MonthlyTotal(BaseModel):
+    """One month's money for one currency moving one way."""
+
+    month: Date = Field(description="First day of the month these totals cover.")
+    currency: str
+    direction: Direction
+    total: Decimal = Field(
+        description="Sum of `amount` for the group. Non-negative: `amount` is a "
+        "magnitude and `direction` carries the sign, so debits do not cancel credits."
+    )
+    transaction_count: int
+
+
+class MonthlyTotals(BaseModel):
+    """The whole result of `GET /transactions/monthly-totals`.
+
+    An envelope, keyed `items` like the two list endpoints, so a client reads all
+    three responses the same way and a field can be added later without breaking
+    one that took a bare array.
+
+    Deliberately *not* `Page`: this is an aggregate, not a page. There is no
+    `limit`/`offset` to report, and no `total` either — for a paginated list that
+    number is the one thing the response would otherwise withhold, while here it
+    would only ever be `len(items)`.
+    """
+
+    items: list[MonthlyTotal]

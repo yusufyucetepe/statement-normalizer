@@ -668,18 +668,119 @@ separator on a Turkish-resident account, where the local convention is a comma.
 published documentation; this is the first evidence for it from a document Wise
 actually produced.
 
+## Milestone 15 — one analytics endpoint (`monthly-totals`, done)
+
+`GET /transactions/monthly-totals`: money per month, split by currency and by
+direction, with the row count per group. The whole of the analytics work, per the
+freeze below.
+
+- [x] **The institution filter never touches `statement_transactions`.** This is
+      the entire risk in the endpoint. Filtering the aggregate by joining the link
+      table would match a shared transaction once per statement holding it and
+      inflate every sum by exactly the overlap — milestone 3's double-count,
+      returning where the output is nothing but numbers and a wrong total looks
+      exactly like a right one. `transactions.source_institution` is denormalized
+      onto the row (`tables.py:111`, indexed) and `GET /transactions` already
+      filters on it the same way, so the aggregate cannot multiply a row.
+- [x] **The test that is the reason to build this rather than assume it.**
+      `test_monthly_totals.py` uploads `revolut_statement.csv` and
+      `revolut_overlap.csv` — 10 transactions across 14 links — and asserts the
+      institution-filtered totals equal the unfiltered ones. Verified by
+      sabotage: swapping the predicate for the join turns 8.40 EUR into 16.80 and
+      179.55 GBP into 229.90, and the test fails on the first assertion.
+- [x] Currencies are never summed together and debits are never netted against
+      credits. `amount` is a magnitude with the sign in `direction`, so either
+      would be a number with no meaning.
+- [x] Aggregation in Postgres (`date_trunc`, `GROUP BY`), not a full table read
+      summed in Python.
+- [x] Filters are `date_from`, `date_to` and `institution` — the sibling
+      endpoint's vocabulary, minus `statement_id` (which would have to join) and
+      with nothing new invented. An earlier draft of this spec said `account_ref`;
+      that would have been new vocabulary, since `GET /transactions` does not
+      take it.
+- [x] **Response envelope decided rather than defaulted.** Keyed `items` like the
+      two list endpoints, so all three read the same way — but not `Page`, and
+      not a bare array. No `limit`/`offset`: an aggregate is not a page, and for a
+      real page those fields answer "is there more", which here would only ever
+      be `len(items)`.
+- [x] No migration: this reads what is already stored. `alembic check` agrees.
+
+### Verification performed
+
+`166 passed` against Postgres 16 (was 158; the 8 new tests), `120 passed, 46
+skipped` with no database, ruff clean, `alembic check` clean. The double-count
+guard was checked by deliberately breaking it, not only by watching it pass.
+
+### A claim that was wrong, recorded so it is not repeated
+
+While specifying this I said `ix_transactions_date_direction` covers two of the
+three group-by columns. It does not. A btree on `(date, direction)` serves a
+range filter on `date`, but Postgres will not use it to satisfy
+`GROUP BY date_trunc('month', date)` — it has no way to know the function
+preserves order, so it scans and hash-aggregates regardless. At these row counts
+that costs nothing and nothing was changed, but the claim itself is false.
+
 ## Next
+
 - [ ] Check the Revolut adapter against a real export — the header is confirmed
       against the published format and third-party importers, but no download
       from an actual account has been through it. **Unblocked by
       `scripts/inspect_real_file.py`**: Revolut app → the account → Statement →
       the Excel/CSV option → run the script on it. A range with an ATM
       withdrawal or an exchange is worth more than a long one, since the fee
-      split is the decision most able to be wrong.
-- [ ] A real institution's PDF with a text layer *and* transactions in it.
-      `dummy_pdf` is built against a fixture we generate, so its layout
-      assumptions (a header row, one line per transaction plus wraps) have not
-      met a real statement. Two candidates were tried on 2026-09-09 and neither
-      answers it — Ziraat's export is a scanned image and Wise's is a fee
-      disclosure (see findings above). Any bank will do, and the adapter does
-      not have to exist yet: run the script and read the PDF LAYOUT section.
+      split is the decision most able to be wrong. Verification of an adapter
+      that already ships, so it survives the freeze — but it needs a download.
+
+## Scope freeze (2026-09-10)
+
+Everything in this section is a **closed question**, not a backlog. The cost that
+matters is no longer in the code, it is in the length of the open list and in how
+much someone has to read before they understand what this is. Each item below is
+recorded with its reason so it does not get reopened by whoever reads the repo
+next, including me.
+
+**The registry is frozen at five adapters.** "Which institution next" is closed.
+Three real institutions already found the things only real files find — rows
+padded to a uniform width, a table starting on line 6, money without fixed
+decimal places, two decimal conventions inside one document. A fourth would
+mostly re-find them, and each one adds a fixture, a test module and a published
+format to keep true.
+
+**`scripts/inspect_real_file.py` is frozen.** No new container types, no new
+heuristics. It has already paid for itself twice over — two bug fixes and the
+entire `ziraat` adapter came out of it — and it is now the size where every
+branch added is a second product growing inside `scripts/`.
+
+**Multi-tenancy is not being built.** It is the one real architectural gap and it
+stays a documented gap. The reason is that it is not a feature, it is four
+coupled changes: auth, a user model, a migration, and a rescoped `dedupe_key`.
+The answer, if it is asked:
+
+> The service is single-tenant by construction. Transaction identity is
+> `sha256(marker|institution|account_ref|date|direction|amount|currency|identity|occurrence)`
+> under a unique index on that hash alone, so it has an account dimension but no
+> owner dimension — two people uploading the same export would collide as
+> duplicates of each other rather than as two people's money. Making it
+> multi-tenant means a `user_id` on statements and transactions, that column
+> folded into both the fingerprint and the unique indexes, and auth to populate
+> it — which is why it is written down as the known gap rather than half-built.
+
+**Analytics stops at the one endpoint above.** No categories, no tagging, no
+budgets, no rules engine. That is the line where this stops being a statement
+normalizer with a defensible boundary and becomes a personal finance app, and a
+half-built personal finance app is worth less than a finished normalizer.
+
+**No frontend.** `/docs` is the interface. FastAPI generates it from the same
+schemas the endpoints validate against, so it cannot drift from the API the way
+a hand-written client would.
+
+**No Redis, no Celery, no auth.** Standing constraint since milestone 1, restated
+here because this is now the list people will read.
+
+**A real PDF with a text layer and transactions in it.** Held open since
+milestone 5 to test whether `dummy_pdf`'s column geometry survives a real bank.
+Two candidates on 2026-09-09 answered neither way — Ziraat renders its export to
+an image, Wise's is a fee disclosure — so it is not blocked on effort but on
+finding an institution that happens to publish one, which is not something we can
+go and do. It stays in the README's known gaps, where it belongs: a limit of the
+adapter, not a task.

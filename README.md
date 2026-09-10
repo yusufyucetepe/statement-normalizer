@@ -87,6 +87,7 @@ migrations, real JSONB, and real `NUMERIC`, and still leave no residue.
 |--------|----------------------|-------|
 | `POST` | `/statements/upload` | Multipart upload of a CSV or PDF. Detects, parses, validates and stores. **201** with the statement summary and a `Location` header; **409** if these exact bytes were uploaded before; **422** if no parser recognizes the file or a claimed file is malformed. |
 | `GET`  | `/transactions`      | Filters: `date_from`, `date_to`, `direction` (`credit`/`debit`), `institution`, `statement_id`, `limit`, `offset`. Returns `{items, total, limit, offset}`. |
+| `GET`  | `/transactions/monthly-totals` | Money per month, split by currency and direction. Filters: `date_from`, `date_to`, `institution`. Returns `{items}` — an aggregate, so no `limit`/`offset`. |
 | `GET`  | `/statements`        | Uploaded statements, most recent first. Filters: `institution`, `limit`, `offset`. Same envelope. |
 | `GET`  | `/statements/{id}`   | One statement. **404** if no statement has that id. |
 | `DELETE` | `/statements/{id}` | Removes the statement and the transactions no other statement still holds. **404** if unknown. |
@@ -240,6 +241,17 @@ Three things this has to get right:
 Statements with no `account_ref` get a NULL `dedupe_key` and are never
 deduplicated: without an account, two people's identical £4.35 coffee at the
 same bank would collapse into one row.
+
+The same join table is the trap in `GET /transactions/monthly-totals`. Filtering
+that aggregate by institution *through* `statement_transactions` would match a
+shared transaction once per statement holding it and inflate every sum by exactly
+the overlap — the double-count above, returning in the one endpoint whose entire
+output is numbers, where a wrong total is indistinguishable from a right one. The
+filter therefore uses `transactions.source_institution`, the column denormalized
+onto the row, which cannot multiply it. `test_monthly_totals.py` uploads two
+overlapping Revolut exports — 10 transactions across 14 links — and asserts the
+filtered totals equal the unfiltered ones; swapping the predicate for the join
+turns 8.40 EUR into 16.80 and fails it.
 
 ### When the institution publishes its own id
 
