@@ -281,3 +281,30 @@ form strict enough that a *wrong* declaration also fails: here, requiring
 grouping separators to be followed by exactly three digits turns a wrong
 `ANGLO`/`EUROPEAN` choice into an error on the first file rather than a thousand
 plausible numbers.
+
+## Prose that restates a data shape is a second copy that silently goes stale
+
+The README described the dedupe fingerprint as
+`institution + account + date + direction + amount + currency + description`.
+That stopped being true at milestone 11, which put a shape marker first, an
+occurrence number last, and substituted the institution's own transaction id for
+the description wherever one is published. The sentence survived four milestones
+and a full README rewrite, and it sat six bullets away from a paragraph in
+`tasks/todo.md` that stated the *correct* payload — so the repository contradicted
+itself, and the contradiction was in the most-read file.
+
+**Why:** a payload written out in prose is a copy of something the code already
+states exactly. Copies do not get updated by the change that invalidates them,
+because nothing links them. Worse, the stale copy reads as authoritative: a
+reader believes the README and only discovers the mismatch by opening
+`identity.py`, which takes about a minute and costs more trust than the sentence
+was ever worth.
+
+**How to apply:** when writing or editing prose that names a field order, a hash
+payload, a schema or a status code, open the source and read it in the same
+sitting — treat it as a claim to verify, not a thing to recall. When the same
+fact already appears elsewhere in the repo, check the two agree before shipping
+either; disagreement between two of your own documents is worse than either being
+merely incomplete. Milestone 14's convention and [[the decimal convention lesson]]
+are the same shape of problem one level down: a fact that lives in exactly one
+place is the only kind that cannot drift.

@@ -772,6 +772,40 @@ less than zero. Totals are unaffected either way; it adds one to
 correct direction for zero, only a stated one, and stating it is a behaviour
 change this does not need.
 
+## Milestone 16 — the README gets shorter (done)
+
+791 lines to 155. The cost that was left was never in the code, it was in how
+much someone has to read before they understand what this is.
+
+- [x] The long-form reasoning moved **verbatim** to `DESIGN.md` rather than being
+      deleted — identity and dedupe, the normalized schema, the adapter pattern
+      and its four decisions, the four case studies of what each real format
+      forced, the statement lifecycle, and the known gaps. It is the strongest
+      material in the repository and none of it was cut; it is just no longer the
+      front door.
+- [x] Four empty headings removed — `## Motivation`, `## Contributing`,
+      `## Usage`, `## Quick Start` had been sitting in the README with nothing
+      under them.
+- [x] The README now opens with what it is, the pipeline in one line, the one
+      idea it is built around, and the status. 156 words before the first
+      instruction: about forty seconds.
+- [x] Setup collapsed to the Docker one-liner, with the manual path as three
+      lines underneath rather than four subsections.
+- [x] A "four big decisions" section replaces the case studies in
+      the README: sign in `direction`, declared decimal convention, per-
+      transaction identity, ambiguity as an error. Each links into `DESIGN.md`
+      for the argument and the real export that forced it.
+- [x] Verified nothing was lost by diffing the heading sets: the only headings
+      not carried over are the four empty ones and the five setup subsections
+      that were rewritten into `## Run it` and `## Tests`. One block of un-headed
+      prose — the pagination-envelope argument — fell through the first pass and
+      was recovered into `DESIGN.md`.
+
+### Verification performed
+
+`120 passed, 46 skipped` (docs-only change), secret guard clean on 79 tracked
+files, every `DESIGN.md` anchor the README links to resolves to a real heading.
+
 ## Next
 
 Nothing. The last open item — checking `revolut` against a real export —
