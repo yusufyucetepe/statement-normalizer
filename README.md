@@ -159,7 +159,12 @@ like output, which is exactly the problem. Invented identifiers live in
 ## What this deliberately does not do
 
 No auth, no Redis, no Celery, no frontend, no categorization or budgeting. It
-normalizes statements and answers questions about them. The full list of known
-gaps — including the ones that would matter first, like the Revolut fee split
-never having met a real fee — is the last section of
-**[DESIGN.md](DESIGN.md#known-gaps)**.
+normalizes statements and answers questions about them.
+
+The known gaps are the last section of **[DESIGN.md](DESIGN.md#known-gaps)**,
+ordered by consequence rather than by when they were noticed. The first is the
+one to read: because a Wise balance *is* a currency,
+two Wise profiles both holding EUR share an account reference, and Wise is also
+the only institution here whose transaction id is trusted in place of the
+description — so it is the single place in this design where dedupe could merge
+two rows that are not the same money.

@@ -806,6 +806,55 @@ much someone has to read before they understand what this is.
 `120 passed, 46 skipped` (docs-only change), secret guard clean on 79 tracked
 files, every `DESIGN.md` anchor the README links to resolves to a real heading.
 
+## Milestone 17 — the known gaps stop contradicting each other (done)
+
+A careful reader could find a contradiction between two bullets in `DESIGN.md`,
+and no answer was prepared for it.
+
+- [x] **The contradiction, resolved and written down.** One bullet said two Wise
+      profiles both holding EUR cannot be told apart — so `wise|EUR` is not a
+      unique account scope. Another treated Wise as the well-behaved institution
+      because it publishes a transaction id. But `identity.py` keeps the account
+      in the payload precisely because *ids are unique within an account, not
+      across every account an institution holds*. If the account dimension
+      collapses, a colliding `TransferWise ID` merges two transactions that are
+      not the same money. The two bullets are now one, and it leads the section:
+      it is the only gap in this design where dedupe merges rows it should not,
+      as against storing one twice.
+- [x] **What it is gated on, stated rather than hand-waved.** The merge needs the
+      id to collide *and* date, direction, amount and currency to coincide, since
+      all of those stay in the payload. It needs two profiles in one instance,
+      which is only possible because the service is single-tenant — the `user_id`
+      that closes multi-tenancy closes this too. Whether Wise's ids are globally
+      unique is **not verified here**, and the bullet says so: no real Wise export
+      has been through the adapter and the fixture's ids are invented, so the
+      guard is the rest of the payload, not a promise about the id. The fix is
+      identified: Wise's filename carries the balance id the upload path discards.
+- [x] **The Ziraat argument cut out of the Wise bullet.** Four lines about what a
+      real download revealed were sitting inside a gap nominally about Wise,
+      burying the actual gap. Now one clause and a link to where the argument
+      lives.
+- [x] **Two non-gaps removed.** "Three real institutions" was a status line
+      opening a section called Known gaps — deleted, the README's status says it.
+      "Dedupe is global, not per institution" was labelled *vanishingly unlikely*
+      in its own text; moved to the `content_sha256` explanation, where it is a
+      property of the design rather than a thing that might go wrong.
+- [x] **Reordered by consequence, with a header that the order actually keeps.**
+      First the four that put a wrong number in the database — the Wise merge,
+      identity leaning on the description, and the two pre-migration backfills,
+      which are live rather than conditional. Then what has not met a real file,
+      led by `wise`, the adapter most likely to surprise us. Then limits of scope,
+      then operational rough edges. An earlier pass claimed "ordered by what could
+      produce a wrong number" while leaving both backfill bullets below a
+      conditional one, which is the sort of promise a careful reader checks.
+- [x] **The lead bullet cut to the size of its neighbours.** It had grown to three
+      paragraphs against three-line siblings, which reads as either the only one
+      that matters or an argument with oneself. Now eight lines — finding, guard,
+      fix, link — matching the longest of the others. The gating detail and the
+      cheap-fix reasoning moved into `### When the institution publishes its own
+      id`, where the id-in-the-fingerprint argument already lives and there is
+      room: the account caveat is its third load-bearing property.
+
 ## Next
 
 Nothing. The last open item — checking `revolut` against a real export —

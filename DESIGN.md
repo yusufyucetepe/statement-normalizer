@@ -26,6 +26,12 @@ The `SELECT` before the insert is only a fast path. The unique index is the
 source of truth: two concurrent identical uploads both pass that check, and the
 loser is caught as an `IntegrityError` and converted to the same `409`.
 
+That index is on the hash alone, not on `(institution, hash)`, so two
+institutions emitting a byte-identical file would collide. Real exports carry an
+account number, a date range or a header that differ, so this has stayed
+theoretical — it is noted here rather than listed as a gap because nothing has
+ever been observed to come close to it.
+
 ### Overlapping statements
 
 File-level dedupe only catches the same *file* twice. The case that actually
@@ -108,6 +114,34 @@ Two properties of that layout are load-bearing:
 is not necessarily unique per row — Wise gives a transfer and the fee charged for
 it the same `TransferWise ID` — so date, amount and currency stay in the payload.
 Keying on the id alone would merge the fee into its transfer and lose it.
+
+**And the id is only ever as good as the account reference under it.** An
+institution promises its ids are unique *within* an account, not across every
+account it holds, which is why `account_ref` stays in the payload beside the id
+rather than being replaced by it. Wise's account reference is the weakest here:
+`extract_account_ref` returns the statement's currency, because a Wise balance
+*is* a currency — so two profiles both holding EUR resolve to the same
+`wise|EUR`. A `TransferWise ID` colliding across those two profiles would merge
+two transactions that are not the same money. It is the only place in this design
+where dedupe merges rather than duplicates, and a merge is the worse failure: a
+duplicate is visible in a total and can be deleted, a merge is silent and the
+losing row is gone.
+
+Three things gate it, and they are worth keeping apart. The merge needs the id to
+collide **and** the date, direction, amount and currency to coincide, because all
+of those stay in the payload alongside the id — the id is never the only
+discriminator. It needs two profiles' statements in one instance at all, which is
+possible only because the service is single-tenant; the `user_id` that closes the
+multi-tenancy gap closes this one with it. And whether Wise's ids are globally
+unique or per-profile is **not something this project has verified** — no real
+Wise export has been through the adapter, and the fixture's ids are invented — so
+the honest statement is that the guard is the rest of the payload, not a promise
+about the id.
+
+The fix is identified and cheap. Wise's own filename carries the balance id —
+`statement_12055917_EUR_…` — which is a genuinely unique account scope. The
+upload path discards the filename; preserving it would replace `EUR` with
+something that cannot collide.
 
 **The marker is hashed in as the first element**, so the two shapes are different
 payloads rather than two spellings of one. A `v1` key and a `v2` key can never
@@ -588,72 +622,72 @@ debit column from a credit one.
 
 ## Known gaps
 
-- **Three real institutions.** `ziraat`, `revolut` and `wise` are the adapters
-  for formats we did not invent; `dummy_bank` remains as the reference
-  implementation.
-- **`revolut` has been checked against real exports, but not against a
+Ordered by consequence: what can put a wrong number in the database, then what
+has not been checked against a file a bank actually produced, then limits of
+scope, then operational rough edges.
+
+- **`wise|EUR` is not a unique account scope, which for Wise makes it an identity
+  risk.** A Wise balance *is* a currency, so two profiles both holding EUR share
+  an account reference — and Wise is the one institution whose transaction id is
+  trusted in place of the description. A colliding `TransferWise ID` would merge
+  two rows that are not the same money: the only place here where dedupe merges
+  rather than duplicates. The guard today is the rest of the payload, not the id;
+  the fix is the balance id in Wise's filename, which the upload path discards.
+  [Argued in full.](#when-the-institution-publishes-its-own-id)
+- **Identity still leans on the description wherever there is no id to use.**
+  `wise` publishes one; `revolut` and `dummy_bank` do not, so for those a bank
+  that rewords its narrative between exports stores the transaction twice. This
+  one is live rather than conditional. `raw_row` is retained, so historical rows
+  can be re-keyed.
+- **Rows stored before migration `0003` have a NULL `dedupe_key`** and never
+  match later uploads, so every overlapping re-download stores them again.
+  Backfilling would have meant reimplementing the fingerprint in SQL;
+  re-uploading those statements is the intended fix.
+- **Rows stored before migration `0004` are keyed on their description**, and a
+  re-upload of the same statement now keys on the id and stores them a second
+  time. The id exists only in the source file, so no backfill is possible;
+  re-uploading is again the fix, and it is a one-time cost per statement.
+- **`wise` has never been checked against a real export**, which makes it the
+  adapter most likely to surprise us. Its header, date format and sample rows
+  with reconciling balances are corroborated by several independent third-party
+  importers and by real exports committed to public repositories — better than
+  memory, and not the same as a file Wise produced. `ziraat` is the reason to
+  care: it was written from a real download, and that download broke five
+  assumptions no format description mentions — see [what a file from an actual
+  account forces](#what-a-file-from-an-actual-account-forces-ziraat).
+- **`revolut` has been checked against real exports, but never against a
   fee-bearing row.** Two anonymized real exports (from `ofxstatement-revolut`,
   GPL-3.0, kept outside this repo) parse correctly — CRLF, unpadded money like
   `-250` and `-9.5`, single-digit hours, and `PENDING` rows with no completion
-  date or balance — and one reconciles 6/6 on its balance chain. `Fee` is zero
-  on every row of both, so the two-transaction fee split has still only run
-  against a fixture we wrote, and that is the decision in the adapter most able
-  to be wrong.
-- **`wise` has still not been checked against a real export.** Its header, date
-  format and sample rows with reconciling balances are corroborated by several
-  independent third-party importers and by real exports committed to public
-  repositories, which is much better than memory and is not the same as a file
-  the bank actually produced.
-  `ziraat` is the counter-example and the reason to care: it was written against
-  a real download, and the real download turned out to pad every row to a
-  uniform width, start its table on line 6, write money without fixed decimal
-  places, order itself newest-first, and write its totals line in a different
-  decimal convention from the table above it — `Borç:-2.262,07` under rows of
-  `-2,262.07`. No format description mentions any of that.
-- **`ziraat` has been checked against exactly one account's export.** Its
-  fixture is hand-built to the shape of that file. A Ziraat account in a foreign
-  currency, or a statement long enough to paginate, has not been seen — and the
-  currency is read from the end of the account line, which is the assumption in
-  it most likely to be wrong on an account unlike the one it was written from.
-- **`wise` uses the statement's currency as its account reference.** One Wise
-  file is one currency balance, so `wise|EUR` is a real scope — but a user with
-  two Wise profiles has two `EUR` balances, and this cannot tell them apart.
-  The filename carries a balance id (`statement_12055917_EUR_…`) that would, if
-  the upload path ever preserved it.
+  date or balance — and one reconciles 6/6 on its balance chain. `Fee` is zero on
+  every row of both, so the two-transaction fee split has still only run against
+  a fixture we wrote, and that is the decision in the adapter most able to be
+  wrong.
 - **`wise` reads `Total fees` for nothing.** The column is kept in `raw_row` but
   never becomes a transaction, because Wise has already accounted for it. If a
   vintage ever charges a fee it does *not* account for, the money goes missing
   silently — the reconciliation test on the fixture is what would catch it, and
   only for the fixture.
-- **Revolut's crypto/trading export is rejected, not parsed.** It is recognized
-  well enough to be declined (see above) rather than misread, but a user who
-  uploads one gets a generic "no parser recognized this file" rather than an
-  explanation. Modelling asset quantities is its own piece of work.
+- **`ziraat` has been checked against exactly one account's export.** Its fixture
+  is hand-built to the shape of that file. A Ziraat account in a foreign
+  currency, or a statement long enough to paginate, has not been seen — and the
+  currency is read from the end of the account line, which is the assumption in
+  it most likely to be wrong on an account unlike the one it was written from.
 - **`revolut` uses `Product` as its account reference.** The export carries no
   IBAN or account number, so `Current` is the closest thing to an account scope.
   Returning nothing instead would leave `dedupe_key` NULL and let every
   overlapping re-download double-count. `revolut|Current` is well defined only
   because this service is single-tenant by construction; revisit it the day it
   grows users.
+- **Revolut's crypto/trading export is rejected, not parsed.** It is recognized
+  well enough to be declined rather than misread, but a user who uploads one gets
+  a generic "no parser recognized this file" rather than an explanation.
+  Modelling asset quantities is its own piece of work.
 - **The PDF adapter is text-layer only.** A scanned or image-only statement
   yields no words and is not recognized; OCR is out of scope.
-- **PDF column geometry comes from a header row.** A statement whose table has
-  no `Date`/`Description`/`Debit`/`Credit`/`Balance` header — or which splits a
+- **PDF column geometry comes from a header row.** A statement whose table has no
+  `Date`/`Description`/`Debit`/`Credit`/`Balance` header — or which splits a
   transaction across a page break — is not handled.
-- **Identity still leans on the description wherever there is no id to use.**
-  `wise` publishes one; `revolut` and `dummy_bank` do not, so for those a bank
-  that reworded its narrative between exports still stores the transaction
-  twice. `raw_row` is retained, so historical rows can be re-keyed.
-- **Dedupe is global, not per institution.** The unique index on
-  `content_sha256` is on the hash alone, so two institutions emitting a
-  byte-identical file would collide. Vanishingly unlikely with real exports.
-- **Rows stored before migration `0003` have a NULL `dedupe_key`** and never
-  match later uploads. Backfilling would have meant reimplementing the
-  fingerprint in SQL; re-uploading those statements is the intended fix.
-- **Rows stored before migration `0004` are keyed on their description**, and a
-  re-upload of the same statement now keys on the id and stores them a second
-  time. The id exists only in the source file, so no backfill is possible;
-  re-uploading is again the fix, and it is a one-time cost per statement.
 - **A delete is not audited and cannot be undone from inside the service.** The
   rows are gone, not tombstoned. Re-uploading the file restores its transactions,
   but the statement gets a new id, and any row it had shared with a statement
